@@ -31,11 +31,13 @@ class ConfigHandlers:
         crypto: LoxoneCrypto,
         on_config_updated: Optional[Callable[[Dict[str, Any]], None]] = None,
         notifier: Optional[Any] = None,
+        on_player_name_updated: Optional[Callable[[int, str], None]] = None,
     ) -> None:
         self.config = config
         self.crypto = crypto
         self.on_config_updated = on_config_updated
         self.notifier = notifier
+        self.on_player_name_updated = on_player_name_updated
         self.current_crc32: Optional[str] = None
         self.extensions: List[Any] = []
         self.raw_config: Dict[str, Any] = {}
@@ -113,6 +115,8 @@ class ConfigHandlers:
     ) -> Dict[str, Any]:
         """Pings Miniserver devicestartup endpoint to transition Audioserver to Online (Grün)."""
         target_ip = (miniserver_ip or self.config.miniserver_ip or "192.168.1.107").strip()
+        if "." not in target_ip:
+            target_ip = "192.168.1.107"
         target_uuid = (uuid or self.config.uuid).strip()
         port = self.config.miniserver_port or 80
 
@@ -248,8 +252,10 @@ class ConfigHandlers:
                         self.config.uuid = str(uuid_val).strip()
 
                     ip_val = section.get("ip") or section.get("host_ip")
-                    if ip_val:
+                    if ip_val and "." in str(ip_val):
                         self.config.miniserver_ip = str(ip_val).strip()
+                    elif ip_val:
+                        logger.info("Ignoring non-IP hostname '%s' from setconfig (keeping %s)", ip_val, self.config.miniserver_ip)
 
                     master_val = section.get("master")
                     if master_val:
@@ -338,3 +344,51 @@ class ConfigHandlers:
         """Manually trigger devicestartup ping to Miniserver."""
         result = await self.notify_miniserver_startup()
         return build_response(command, "devicestartup", result)
+
+    async def player_name(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
+        """Handles player / zone renaming from Loxone Config or Miniserver."""
+        parts = command.split("/")
+        encoded = parts[3] if len(parts) > 3 else ""
+        raw_bytes = b""
+        if not encoded and payload:
+            raw_bytes = payload
+        elif encoded:
+            try:
+                norm = unquote(encoded)
+                padding = 4 - (len(norm) % 4)
+                if padding and padding != 4:
+                    norm += "=" * padding
+                raw_bytes = base64.b64decode(norm)
+            except Exception as exc:
+                logger.warning("Failed to decode playername payload: %s", exc)
+
+        if raw_bytes:
+            try:
+                parsed = json.loads(raw_bytes.decode("utf-8"))
+                logger.info("Received audio/cfg/playername payload: %s", parsed)
+                items = parsed if isinstance(parsed, list) else [parsed]
+                for item in items:
+                    if isinstance(item, dict):
+                        zone_id = item.get("playerid") or item.get("player") or item.get("id") or item.get("zone")
+                        name = item.get("name")
+                        if zone_id is not None and name and self.on_player_name_updated:
+                            try:
+                                self.on_player_name_updated(int(zone_id), str(name))
+                            except Exception as e:
+                                logger.warning("Failed to update player name for zone %s: %s", zone_id, e)
+            except Exception as exc:
+                logger.warning("Error parsing playername JSON: %s", exc)
+
+        return build_response(command, "playername", {"success": True, "result": ""})
+
+    async def volumes(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
+        """Handles volume configuration queries and adjustments."""
+        return build_response(command, "volumes", {"success": True})
+
+    async def get_inputs(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
+        """Returns available line inputs (empty list for virtual Audioserver)."""
+        return build_response(command, "getinputs", [])
+
+    async def get_all(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
+        """Returns general audio configuration."""
+        return build_response(command, "all", {"success": True})

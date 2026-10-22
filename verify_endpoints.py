@@ -103,6 +103,10 @@ async def run_verification():
     router.register_prefix("audio/cfg/identify", cfg_handlers.identify)
     router.register_prefix("audio/cfg/diagnosis", cfg_handlers.diagnosis)
     router.register_prefix("audio/cfg/restart", cfg_handlers.restart)
+    router.register_prefix("audio/cfg/playername", cfg_handlers.player_name)
+    router.register_prefix("audio/cfg/volumes", cfg_handlers.volumes)
+    router.register_prefix("audio/cfg/getinputs", cfg_handlers.get_inputs)
+    router.register_prefix("audio/cfg/all", cfg_handlers.get_all)
 
     router.register_prefix("audio/cfg/getservices", fav_handlers.get_services)
     router.register_prefix("audio/cfg/getavailableservices", fav_handlers.get_available_services)

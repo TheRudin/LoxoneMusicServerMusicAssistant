@@ -7,6 +7,7 @@ from loxone_musicserver.loxone.crypto import LoxoneCrypto
 from loxone_musicserver.loxone.handlers.config_handlers import ConfigHandlers
 from loxone_musicserver.loxone.handlers.secure_handlers import SecureHandlers
 from loxone_musicserver.loxone.handlers.zone_handlers import ZoneHandlers
+from loxone_musicserver.loxone.responses import serialize_result
 from loxone_musicserver.loxone.websocket import LoxoneZoneState
 
 
@@ -55,9 +56,10 @@ class TestHandlers(unittest.TestCase):
             cfg_dyn.master_serial = "MS1A6D"
             self.assertEqual(sec_linked.clean_master, "MS1A6D")
 
-            res_auth = await self.secure.authenticate("secure/authenticate")
-            self.assertEqual(res_auth.payload["response"], "authentication successful")
-            self.assertTrue(res_auth.raw)
+            res_auth = await self.secure.authenticate("secure/authenticate/admin/token123")
+            self.assertEqual(res_auth.payload, "authentication successful")
+            self.assertFalse(res_auth.raw)
+            self.assertIn('"authenticate_result": "authentication successful"', serialize_result(res_auth))
 
             res_init = await self.secure.init("secure/init")
             self.assertEqual(res_init.name, "secure_init")
@@ -168,6 +170,25 @@ class TestHandlers(unittest.TestCase):
             startup_res = await self.cfg.trigger_startup("audio/cfg/trigger_startup")
             self.assertIn("timestamp", startup_res.payload)
             self.assertEqual(startup_res.payload["url"], "http://192.168.1.107:80/dev/sps/devicestartup/14f3b890-023a-11ee-be56-0242ac120002")
+
+            # Test player_name handler
+            updated_zones = {}
+            self.cfg.on_player_name_updated = lambda zid, name: updated_zones.update({zid: name})
+            pn_json = json.dumps([{"playerid": 1, "name": "Wohnzimmer"}, {"playerid": 2, "name": "Küche"}])
+            pn_b64 = base64.b64encode(pn_json.encode("utf-8")).decode("utf-8")
+            pn_res = await self.cfg.player_name(f"audio/cfg/playername/{pn_b64}")
+            self.assertEqual(pn_res.name, "playername")
+            self.assertEqual(updated_zones, {1: "Wohnzimmer", 2: "Küche"})
+
+            # Test volumes, get_inputs, and get_all handlers
+            vol_res = await self.cfg.volumes("audio/cfg/volumes")
+            self.assertTrue(vol_res.payload["success"])
+
+            in_res = await self.cfg.get_inputs("audio/cfg/getinputs")
+            self.assertEqual(in_res.payload, [])
+
+            all_res = await self.cfg.get_all("audio/cfg/all")
+            self.assertTrue(all_res.payload["success"])
 
         asyncio.run(run())
 

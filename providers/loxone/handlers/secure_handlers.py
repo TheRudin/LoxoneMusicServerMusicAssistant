@@ -72,15 +72,7 @@ class SecureHandlers:
         )
 
     async def authenticate(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
-        return build_response(
-            command,
-            "authenticate",
-            {
-                "command": "secure/authenticate",
-                "response": "authentication successful",
-            },
-            raw=True,
-        )
+        return build_response(command, "authenticate", "authentication successful")
 
     async def init(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         return build_response(

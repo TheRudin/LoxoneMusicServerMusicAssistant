@@ -147,9 +147,20 @@ class LoxoneMusicServerPlugin(PluginProvider):
 
     def _register_routes(self) -> None:
         """Registers all Loxone command routes."""
-        secure = SecureHandlers(self.server_config.clean_master_serial, config=self.server_config)
-        self.secure = secure
-        cfg = ConfigHandlers(self.server_config, self.crypto, self._apply_loxone_config, notifier=self.notifier)
+        def on_player_name_updated(zone_id: int, name: str) -> None:
+            if zone_id in self.zone_states:
+                self.zone_states[zone_id].name = name
+                LOGGER.info("Updated zone %s name to %s", zone_id, name)
+                if self.notifier:
+                    self.notifier.notify_zone_state_changed(self.zone_states[zone_id])
+
+        cfg = ConfigHandlers(
+            self.server_config,
+            self.crypto,
+            self._apply_loxone_config,
+            notifier=self.notifier,
+            on_player_name_updated=on_player_name_updated,
+        )
         self.cfg = cfg
 
         # Zone controls
@@ -231,6 +242,10 @@ class LoxoneMusicServerPlugin(PluginProvider):
         self.router.register_prefix("audio/cfg/restart", cfg.restart)
         self.router.register_prefix("audio/cfg/devicestartup", cfg.trigger_startup)
         self.router.register_prefix("audio/cfg/trigger_startup", cfg.trigger_startup)
+        self.router.register_prefix("audio/cfg/playername", cfg.player_name)
+        self.router.register_prefix("audio/cfg/volumes", cfg.volumes)
+        self.router.register_prefix("audio/cfg/getinputs", cfg.get_inputs)
+        self.router.register_prefix("audio/cfg/all", cfg.get_all)
 
         self.router.register_prefix("audio/cfg/getservices", favs.get_services)
         self.router.register_prefix("audio/cfg/getavailableservices", favs.get_available_services)
@@ -277,6 +292,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
                         if uuid_val := v.get("uuid"):
                             self.server_config.uuid = str(uuid_val).strip()
                         if ip_val := (v.get("ip") or v.get("host_ip")):
-                            self.server_config.miniserver_ip = str(ip_val).strip()
+                            if "." in str(ip_val):
+                                self.server_config.miniserver_ip = str(ip_val).strip()
                         if name_val := v.get("name"):
                             self.server_config.server_name = str(name_val).strip()
