@@ -215,6 +215,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
         # Register prefixes
         self.router.register_prefix("secure/hello", secure.hello)
         self.router.register_prefix("secure/info/pairing", secure.info_pairing)
+        self.router.register_prefix("secure/infopairing", secure.info_pairing)
         self.router.register_prefix("secure/authenticate", secure.authenticate)
         self.router.register_prefix("secure/init", secure.init)
 

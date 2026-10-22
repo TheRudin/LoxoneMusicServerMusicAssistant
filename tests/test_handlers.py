@@ -22,15 +22,31 @@ class TestHandlers(unittest.TestCase):
             res_hello = await self.secure.hello("secure/hello/test_pub_key")
             self.assertEqual(res_hello.name, "secure_hello")
             self.assertEqual(res_hello.payload["public_key"], "test_pub_key")
+            self.assertTrue(res_hello.raw)
+
+            # Test timestamp prefix and base64 with slashes
+            res_hello_ts = await self.secure.hello("secure/hello/1792675208/LS0tLS1CRUdJTi/BDRVJUSUZJQ0FURS...")
+            self.assertEqual(res_hello_ts.payload["public_key"], "LS0tLS1CRUdJTi/BDRVJUSUZJQ0FURS...")
+            self.assertEqual(res_hello_ts.payload["error"], 0)
+            self.assertTrue(res_hello_ts.raw)
 
             res_info = await self.secure.info_pairing("secure/info/pairing")
             self.assertEqual(res_info.payload["master"], "TEST_SERIAL_123")
+            self.assertEqual(res_info.payload["error"], 0)
+            self.assertTrue(res_info.raw)
+
+            # Verify un-paired returns error -81
+            sec_unpaired = SecureHandlers("")
+            res_unpaired = await sec_unpaired.info_pairing("secure/info/pairing")
+            self.assertEqual(res_unpaired.payload["error"], -81)
+            self.assertEqual(res_unpaired.payload["master"], "")
 
             # Verify colons and hyphens in master serial are stripped
             sec_colons = SecureHandlers("50:4F:94:D0:1A:6D")
             self.assertEqual(sec_colons.clean_master, "504F94D01A6D")
             info_colons = await sec_colons.info_pairing("secure/info/pairing")
             self.assertEqual(info_colons.payload["master"], "504F94D01A6D")
+            self.assertEqual(info_colons.payload["error"], 0)
 
             # Verify SecureHandlers linked with ServerConfig dynamically syncs
             cfg_dyn = ServerConfig(master_serial="50:4F:94:D0:1A:6D")
@@ -40,11 +56,13 @@ class TestHandlers(unittest.TestCase):
             self.assertEqual(sec_linked.clean_master, "MS1A6D")
 
             res_auth = await self.secure.authenticate("secure/authenticate")
-            self.assertEqual(res_auth.payload, "authentication successful")
+            self.assertEqual(res_auth.payload["response"], "authentication successful")
+            self.assertTrue(res_auth.raw)
 
             res_init = await self.secure.init("secure/init")
             self.assertEqual(res_init.name, "secure_init")
             self.assertIn("jwt", res_init.payload)
+            self.assertTrue(res_init.raw)
 
         asyncio.run(run())
 

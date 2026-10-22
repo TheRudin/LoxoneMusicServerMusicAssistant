@@ -38,8 +38,14 @@ class SecureHandlers:
         return self.master_serial.replace(":", "").replace("-", "").strip().upper()
 
     async def hello(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
-        parts = command.strip("/").split("/")
-        public_key = parts[2] if len(parts) > 2 else ""
+        clean = command.strip("/")
+        remainder = clean[len("secure/hello") :].lstrip("/")
+        if "/" in remainder:
+            first_part, rest = remainder.split("/", 1)
+            public_key = rest if first_part.isdigit() else remainder
+        else:
+            public_key = remainder
+
         return build_response(
             command,
             "secure_hello",
@@ -48,15 +54,17 @@ class SecureHandlers:
                 "error": 0,
                 "public_key": public_key,
             },
+            raw=True,
         )
 
     async def info_pairing(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
+        is_paired = bool(self.clean_master)
         return build_response(
             command,
             "secure_infopairing",
             {
                 "command": "secure/infopairing",
-                "error": -81,
+                "error": 0 if is_paired else -81,
                 "master": self.clean_master,
                 "peers": [],
             },
@@ -64,7 +72,15 @@ class SecureHandlers:
         )
 
     async def authenticate(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
-        return build_response(command, "authenticate", "authentication successful")
+        return build_response(
+            command,
+            "authenticate",
+            {
+                "command": "secure/authenticate",
+                "response": "authentication successful",
+            },
+            raw=True,
+        )
 
     async def init(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         return build_response(
@@ -75,4 +91,5 @@ class SecureHandlers:
                 "error": 0,
                 "jwt": LEGACY_JWT,
             },
+            raw=True,
         )
