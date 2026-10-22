@@ -41,13 +41,12 @@ class SecureHandlers:
         )
 
     async def info_pairing(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
-        is_paired = bool(self.master_serial)
         return build_response(
             command,
             "secure_infopairing",
             {
                 "command": "secure/infopairing",
-                "error": 0 if is_paired else -81,
+                "error": -81,
                 "master": self.master_serial.upper() if self.master_serial else "",
                 "peers": [],
             },

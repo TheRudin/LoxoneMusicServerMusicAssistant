@@ -23,10 +23,10 @@ class TestDualProtocolServer(unittest.TestCase):
             self.assertEqual(res.payload["error"], -81)
             self.assertEqual(res.payload["master"], "")
 
-            # Paired: error 0, master "MS1A6D"
+            # Paired: error -81 (ready to pair/re-pair), master "MS1A6D"
             secure.set_master("MS1A6D")
             res2 = await secure.info_pairing("secure/info/pairing")
-            self.assertEqual(res2.payload["error"], 0)
+            self.assertEqual(res2.payload["error"], -81)
             self.assertEqual(res2.payload["master"], "MS1A6D")
 
         asyncio.run(run())
