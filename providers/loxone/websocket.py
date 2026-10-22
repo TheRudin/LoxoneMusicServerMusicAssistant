@@ -120,7 +120,7 @@ class LoxoneWebSocketNotifier:
             if requested_proto
             else ("miniserver",)
         )
-        ws = web.WebSocketResponse(heartbeat=30.0, protocols=protocols)
+        ws = web.WebSocketResponse(heartbeat=None, protocols=protocols)
         await ws.prepare(request)
 
         entry = (ws, server_name)
