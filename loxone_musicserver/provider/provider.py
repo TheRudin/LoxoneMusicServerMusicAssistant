@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
+import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..config import ServerConfig
@@ -27,6 +29,8 @@ if TYPE_CHECKING:
 
 try:
     from music_assistant.models.plugin import PluginProvider
+    from music_assistant_models.config_entries import ConfigEntry, ConfigValueOption
+    from music_assistant_models.enums import ConfigEntryType
 except ImportError:
     # Standalone fallback when running outside Music Assistant
     class PluginProvider:  # type: ignore[no-redef]
@@ -35,7 +39,47 @@ except ImportError:
             self.manifest = manifest
             self.config = config
 
+        def get_config_value(self, key: str, default: Any = None) -> Any:
+            if hasattr(self.config, 'get_value'):
+                return self.config.get_value(key)
+            return default
+
+    class ConfigEntry:  # type: ignore[no-redef]
+        def __init__(self, **kwargs: Any) -> None:
+            self.__dict__.update(kwargs)
+
+    class ConfigValueOption:  # type: ignore[no-redef]
+        def __init__(self, title: str = "", value: Any = None, **kwargs: Any) -> None:
+            self.title = title
+            self.value = value
+            self.__dict__.update(kwargs)
+
+    class ConfigEntryType:  # type: ignore[no-redef]
+        STRING = 'string'
+        INTEGER = 'integer'
+        BOOLEAN = 'boolean'
+
 logger = logging.getLogger("music_assistant.providers.loxone")
+
+GITHUB_ASSETS_BASE = "https://raw.githubusercontent.com/TheRudin/LoxoneMusicServerMusicAssistant/main/assets"
+
+CONF_SERVER_NAME = 'server_name'
+CONF_LISTEN_IP = 'listen_ip'
+CONF_APP_PORT = 'app_http_port'
+CONF_MS_PORT = 'ms_http_port'
+CONF_UDP_PORT = 'udp_discovery_port'
+CONF_MAC_ADDRESS = 'mac_address'
+CONF_MINISERVER_SERIAL = 'miniserver_serial'
+CONF_MINISERVER_IP = 'miniserver_ip'
+
+CONF_ZONE_1_PLAYER = 'zone_1_player'
+CONF_ZONE_2_PLAYER = 'zone_2_player'
+CONF_ZONE_3_PLAYER = 'zone_3_player'
+CONF_ZONE_4_PLAYER = 'zone_4_player'
+CONF_ZONE_5_PLAYER = 'zone_5_player'
+CONF_ZONE_6_PLAYER = 'zone_6_player'
+CONF_ZONE_7_PLAYER = 'zone_7_player'
+CONF_ZONE_8_PLAYER = 'zone_8_player'
 
 
 class LoxoneMusicServerPlugin(PluginProvider):
@@ -55,6 +99,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
         self.zone_to_player: Dict[int, str] = {}
         self.player_to_zone: Dict[str, int] = {}
         self.zone_states: Dict[int, LoxoneZoneState] = {}
+        self._radio_catalog: Dict[str, Dict[str, Any]] = {}
 
         self.notifier = LoxoneWebSocketNotifier(
             self.server_config,
@@ -64,9 +109,166 @@ class LoxoneMusicServerPlugin(PluginProvider):
         self.discovery = LoxoneDiscoveryService(self.server_config)
         self.server = LoxoneServer(self.server_config, self.router, self.notifier)
 
+    async def get_config_entries(self) -> tuple[Any, ...]:
+        """Return Config entries to configure this provider in Music Assistant UI."""
+        player_options: List[ConfigValueOption] = [
+            ConfigValueOption(title="Automatisch (Nächster freier Player)", value="auto"),
+            ConfigValueOption(title="Deaktiviert (Kein Player)", value="disabled"),
+        ]
+        players = []
+        if hasattr(self.mass, "players"):
+            if hasattr(self.mass.players, "_players") and isinstance(self.mass.players._players, dict):
+                players = list(self.mass.players._players.values())
+            elif hasattr(self.mass.players, "all") and isinstance(self.mass.players.all, (list, tuple)):
+                players = list(self.mass.players.all)
+            else:
+                try:
+                    players = list(self.mass.players)
+                except Exception:
+                    players = []
+
+        for p in sorted(players, key=lambda x: (getattr(x, "display_name", None) or getattr(x, "name", "")).lower()):
+            pid = getattr(p, "player_id", None)
+            if not pid:
+                continue
+            pname = getattr(p, "display_name", None) or getattr(p, "name", pid)
+            player_options.append(ConfigValueOption(title=f"{pname} ({pid})", value=str(pid)))
+
+        entries = [
+            ConfigEntry(
+                key=CONF_SERVER_NAME,
+                type=ConfigEntryType.STRING,
+                default_value=self.server_config.server_name,
+                label='Server Name',
+                description='Name of the Loxone AudioServer emulated in Loxone Config and App',
+                required=False,
+            ),
+            ConfigEntry(
+                key=CONF_LISTEN_IP,
+                type=ConfigEntryType.STRING,
+                default_value=self.server_config.host,
+                label='Bind IP Address',
+                description='IP to bind listeners (0.0.0.0 for all interfaces)',
+                required=False,
+            ),
+            ConfigEntry(
+                key=CONF_APP_PORT,
+                type=ConfigEntryType.INTEGER,
+                default_value=self.server_config.app_port,
+                label='Loxone App TCP Port',
+                description='Port for Loxone App HTTP and WebSocket (7091)',
+                required=False,
+            ),
+            ConfigEntry(
+                key=CONF_MS_PORT,
+                type=ConfigEntryType.INTEGER,
+                default_value=self.server_config.ms_port,
+                label='Loxone Miniserver TCP Port',
+                description='Port for Miniserver HTTP and WebSocket (7095)',
+                required=False,
+            ),
+            ConfigEntry(
+                key=CONF_UDP_PORT,
+                type=ConfigEntryType.INTEGER,
+                default_value=self.server_config.discovery_port,
+                label='Discovery UDP Port',
+                description='Port for Loxone UDP discovery (7070)',
+                required=False,
+            ),
+            ConfigEntry(
+                key=CONF_MAC_ADDRESS,
+                type=ConfigEntryType.STRING,
+                default_value=self.server_config.mac_address,
+                label='MAC Address',
+                description='Custom MAC address (leave empty for auto)',
+                required=False,
+            ),
+            ConfigEntry(
+                key=CONF_MINISERVER_SERIAL,
+                type=ConfigEntryType.STRING,
+                default_value=self.server_config.master_serial,
+                label='Miniserver Serial',
+                description='Serial number of paired Miniserver (e.g. 504F94101A6D or MS1A6D; auto-detected if empty)',
+                required=False,
+            ),
+            ConfigEntry(
+                key=CONF_MINISERVER_IP,
+                type=ConfigEntryType.STRING,
+                default_value=self.server_config.miniserver_ip,
+                label='Miniserver IP Address',
+                description='IP address of the Loxone Miniserver (default 192.168.1.107)',
+                required=False,
+            ),
+        ]
+
+        zone_configs = [
+            (CONF_ZONE_1_PLAYER, "Stereo-Ausgang 1 (Zone 1)", "Music Assistant Player für Loxone Stereo-Ausgang 1 (Zone 1)"),
+            (CONF_ZONE_2_PLAYER, "Stereo-Ausgang 2 (Zone 2)", "Music Assistant Player für Loxone Stereo-Ausgang 2 (Zone 2)"),
+            (CONF_ZONE_3_PLAYER, "Stereo-Ausgang 3 (Zone 3)", "Music Assistant Player für Loxone Stereo-Ausgang 3 (Zone 3)"),
+            (CONF_ZONE_4_PLAYER, "Stereo-Ausgang 4 (Zone 4)", "Music Assistant Player für Loxone Stereo-Ausgang 4 (Zone 4)"),
+            (CONF_ZONE_5_PLAYER, "Stereo-Ausgang 5 (Extension 1 Ausg. 1)", "Music Assistant Player für Stereo-Ausgang 5 (Extension 1 Ausgang 1)"),
+            (CONF_ZONE_6_PLAYER, "Stereo-Ausgang 6 (Extension 1 Ausg. 2)", "Music Assistant Player für Stereo-Ausgang 6 (Extension 1 Ausgang 2)"),
+            (CONF_ZONE_7_PLAYER, "Stereo-Ausgang 7 (Extension 2 Ausg. 1)", "Music Assistant Player für Stereo-Ausgang 7 (Extension 2 Ausgang 1)"),
+            (CONF_ZONE_8_PLAYER, "Stereo-Ausgang 8 (Extension 2 Ausg. 2)", "Music Assistant Player für Stereo-Ausgang 8 (Extension 2 Ausgang 2)"),
+        ]
+
+        for key, lbl, desc in zone_configs:
+            entries.append(
+                ConfigEntry(
+                    key=key,
+                    type=ConfigEntryType.STRING,
+                    default_value="auto",
+                    options=tuple(player_options),
+                    label=lbl,
+                    description=desc,
+                    required=False,
+                    category="Zone Mapping",
+                )
+            )
+
+        return tuple(entries)
+
     async def loaded_in_mass(self) -> None:
         """Called when Music Assistant starts the provider."""
         logger.info("Initializing Loxone AudioServer provider in Music Assistant...")
+
+        # Configure storage path from Mass if available
+        if hasattr(self.mass, "storage_path") and self.mass.storage_path:
+            self.server_config.data_dir = Path(self.mass.storage_path) / "loxone"
+
+        # Load user configuration overrides if available
+        def _get_val(key: str) -> Any:
+            val = None
+            if hasattr(self, "get_config_value"):
+                try:
+                    val = self.get_config_value(key)
+                except Exception:
+                    pass
+            if val is None and hasattr(self, "config") and hasattr(self.config, "get_value"):
+                try:
+                    val = self.config.get_value(key)
+                except Exception:
+                    pass
+            if isinstance(val, (str, int, float, bool)):
+                return val
+            return None
+
+        if sname := _get_val(CONF_SERVER_NAME):
+            self.server_config.server_name = str(sname)
+        if lip := _get_val(CONF_LISTEN_IP):
+            self.server_config.host = str(lip)
+        if aport := _get_val(CONF_APP_PORT):
+            self.server_config.app_port = int(aport)
+        if mport := _get_val(CONF_MS_PORT):
+            self.server_config.ms_port = int(mport)
+        if uport := _get_val(CONF_UDP_PORT):
+            self.server_config.discovery_port = int(uport)
+        if mac := _get_val(CONF_MAC_ADDRESS):
+            self.server_config.mac_address = str(mac).strip()
+        if mserial := _get_val(CONF_MINISERVER_SERIAL):
+            self.server_config.master_serial = str(mserial).replace(":", "").replace("-", "").strip().upper()
+        if ms_ip := _get_val(CONF_MINISERVER_IP):
+            self.server_config.miniserver_ip = str(ms_ip).strip()
 
         self._register_routes()
         self._sync_zones_from_mass()
@@ -87,8 +289,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
         logger.info("Loxone AudioServer provider stopped")
 
     def _sync_zones_from_mass(self) -> None:
-        """Maps Music Assistant players directly to Loxone zones."""
-        zone_id = 1
+        """Maps Music Assistant players to Loxone zones respecting plugin config."""
         players = []
         if hasattr(self.mass, "players"):
             if hasattr(self.mass.players, "_players") and isinstance(self.mass.players._players, dict):
@@ -102,14 +303,89 @@ class LoxoneMusicServerPlugin(PluginProvider):
                     logger.warning("Error iterating mass.players: %s", exc)
                     players = []
 
-        for player in players:
-            pid = getattr(player, "player_id", None)
-            if not pid:
-                continue
-            self.zone_to_player[zone_id] = pid
-            self.player_to_zone[pid] = zone_id
+        player_map: Dict[str, Any] = {}
+        for p in players:
+            pid = getattr(p, "player_id", None)
+            if pid:
+                player_map[str(pid)] = p
 
-            name = getattr(player, "display_name", None) or getattr(player, "name", f"Zone {zone_id}")
+        def _get_val(key: str) -> Any:
+            val = None
+            if hasattr(self, "get_config_value"):
+                try:
+                    val = self.get_config_value(key)
+                except Exception:
+                    pass
+            if val is None and hasattr(self, "config") and hasattr(self.config, "get_value"):
+                try:
+                    val = self.config.get_value(key)
+                except Exception:
+                    pass
+            if isinstance(val, (str, int, float, bool)):
+                return val
+            return None
+
+        new_zone_to_player: Dict[int, str] = {}
+        new_player_to_zone: Dict[str, int] = {}
+        assigned_pids: set[str] = set()
+
+        # Step 1: Explicitly assigned zones (1..8)
+        for zid in range(1, 9):
+            cfg_val = _get_val(f"zone_{zid}_player")
+            if cfg_val and cfg_val not in ("auto", "disabled", "none", ""):
+                cfg_pid = str(cfg_val).strip()
+                if cfg_pid in player_map:
+                    new_zone_to_player[zid] = cfg_pid
+                    new_player_to_zone[cfg_pid] = zid
+                    assigned_pids.add(cfg_pid)
+                    logger.info("Configured Zone %d -> Player %s (%s)", zid, cfg_pid, getattr(player_map[cfg_pid], "name", ""))
+                else:
+                    logger.warning("Configured player %s for Zone %d not found in Music Assistant", cfg_pid, zid)
+
+        # Step 2: Auto-assignment for unassigned zones (1..8)
+        remaining_players = [
+            p for pid, p in sorted(
+                player_map.items(),
+                key=lambda kv: (getattr(kv[1], "display_name", None) or getattr(kv[1], "name", "")).lower()
+            )
+            if pid not in assigned_pids
+        ]
+        rem_idx = 0
+        for zid in range(1, 9):
+            cfg_val = _get_val(f"zone_{zid}_player")
+            if cfg_val in ("disabled", "none"):
+                logger.info("Zone %d is disabled in plugin config", zid)
+                continue
+            if zid not in new_zone_to_player and rem_idx < len(remaining_players):
+                p = remaining_players[rem_idx]
+                pid = str(getattr(p, "player_id"))
+                new_zone_to_player[zid] = pid
+                new_player_to_zone[pid] = zid
+                assigned_pids.add(pid)
+                rem_idx += 1
+                logger.info("Auto-assigned Zone %d -> Player %s (%s)", zid, pid, getattr(p, "name", ""))
+
+        # Step 3: Any additional players beyond zone 8
+        next_zid = 9
+        while rem_idx < len(remaining_players):
+            p = remaining_players[rem_idx]
+            pid = str(getattr(p, "player_id"))
+            new_zone_to_player[next_zid] = pid
+            new_player_to_zone[pid] = next_zid
+            assigned_pids.add(pid)
+            rem_idx += 1
+            logger.info("Extended Zone %d -> Player %s (%s)", next_zid, pid, getattr(p, "name", ""))
+            next_zid += 1
+
+        self.zone_to_player = new_zone_to_player
+        self.player_to_zone = new_player_to_zone
+
+        # Step 4: Update zone states
+        for zid, pid in self.zone_to_player.items():
+            player = player_map.get(pid)
+            if not player:
+                continue
+            name = getattr(player, "display_name", None) or getattr(player, "name", f"Zone {zid}")
             vol = getattr(player, "volume_level", 30)
             if vol is None:
                 vol = 30
@@ -118,14 +394,24 @@ class LoxoneMusicServerPlugin(PluginProvider):
             mode = "play" if "play" in playback_state else "stop"
             power = "on" if powered else "off"
 
-            self.zone_states[zone_id] = LoxoneZoneState(
-                playerid=zone_id,
-                name=name,
-                volume=int(vol),
-                power=power,
-                mode=mode,
-            )
-            zone_id += 1
+            if zid in self.zone_states:
+                state = self.zone_states[zid]
+                state.name = name
+                state.volume = int(vol)
+                state.power = power
+                state.mode = mode
+            else:
+                self.zone_states[zid] = LoxoneZoneState(
+                    playerid=zid,
+                    name=name,
+                    volume=int(vol),
+                    power=power,
+                    mode=mode,
+                )
+            if self.notifier:
+                self.notifier.notify_zone_state_changed(self.zone_states[zid])
+
+        logger.info("Mapped %d Music Assistant players to Loxone zones", len(self.zone_to_player))
 
     def _on_mass_event(self, event: Any) -> None:
         """Receives internal Mass events."""
@@ -274,33 +560,141 @@ class LoxoneMusicServerPlugin(PluginProvider):
         async def cycle_fav(zid: int) -> None:
             pass
 
+        def _get_item_cover_url(item: Any, fallback: str = "") -> str:
+            """Resolves artwork URL for an item via Music Assistant helpers, metadata, or CDN assets."""
+            if hasattr(self.mass, "get_media_item_image_url"):
+                try:
+                    url = self.mass.get_media_item_image_url(item)
+                    if isinstance(url, str) and (url.startswith("http://") or url.startswith("https://") or url.startswith("/")):
+                        return url
+                except Exception:
+                    pass
+
+            img_path = ""
+            if img := getattr(item, "image", None):
+                if isinstance(img, str):
+                    img_path = img
+                elif hasattr(img, "path") and isinstance(img.path, str):
+                    img_path = img.path
+                elif hasattr(img, "url") and isinstance(img.url, str):
+                    img_path = img.url
+            elif hasattr(item, "metadata") and getattr(item.metadata, "images", None):
+                images = item.metadata.images
+                if isinstance(images, (list, tuple)) and images:
+                    first_img = images[0]
+                    if isinstance(first_img, str):
+                        img_path = first_img
+                    elif hasattr(first_img, "path") and isinstance(first_img.path, str):
+                        img_path = first_img.path
+                    elif hasattr(first_img, "url") and isinstance(first_img.url, str):
+                        img_path = first_img.url
+            elif hasattr(item, "album") and getattr(item.album, "image", None):
+                alb_img = item.album.image
+                if isinstance(alb_img, str):
+                    img_path = alb_img
+                elif hasattr(alb_img, "path") and isinstance(alb_img.path, str):
+                    img_path = alb_img.path
+
+            if img_path and isinstance(img_path, str):
+                cand = img_path.strip()
+                if cand.startswith("http://") or cand.startswith("https://"):
+                    return cand
+                base_url = getattr(self.mass, "server_url", None)
+                if not base_url and hasattr(self.mass, "web") and hasattr(self.mass.web, "base_url"):
+                    base_url = self.mass.web.base_url
+                if isinstance(base_url, str) and base_url:
+                    from urllib.parse import quote
+                    return f"{str(base_url).rstrip('/')}/imageproxy?path={quote(cand)}"
+                return cand
+
+            # Branded high-resolution assets for Swiss/German stations
+            name = getattr(item, "name", "")
+            if isinstance(name, str):
+                name_l = name.lower()
+                if "srf 3" in name_l or "srf3" in name_l:
+                    return f"{GITHUB_ASSETS_BASE}/srf3.png"
+                if "srf 1" in name_l or "srf1" in name_l:
+                    return f"{GITHUB_ASSETS_BASE}/srf1.png"
+                if "swiss pop" in name_l or "swisspop" in name_l:
+                    return f"{GITHUB_ASSETS_BASE}/swisspop.png"
+                if "energy basel" in name_l:
+                    return f"{GITHUB_ASSETS_BASE}/energy_basel.png"
+                if "energy zürich" in name_l or "energy zuerich" in name_l:
+                    return f"{GITHUB_ASSETS_BASE}/energy_zuerich.png"
+                if "1live" in name_l:
+                    return f"{GITHUB_ASSETS_BASE}/1live.png"
+                if "swr3" in name_l:
+                    return f"{GITHUB_ASSETS_BASE}/swr3.png"
+                if "bayern 3" in name_l or "bayern3" in name_l:
+                    return f"{GITHUB_ASSETS_BASE}/bayern3.png"
+
+            return fallback
+
         async def get_radios() -> List[Dict[str, Any]]:
             radios: List[Dict[str, Any]] = []
             if hasattr(self.mass, "music"):
                 try:
+                    items = []
                     if hasattr(self.mass.music, "radios") and hasattr(self.mass.music.radios, "library_items"):
-                        items = await self.mass.music.radios.library_items()
+                        res = self.mass.music.radios.library_items()
+                        if asyncio.iscoroutine(res):
+                            items = await res
+                        elif hasattr(res, "__aiter__"):
+                            items = [it async for it in res]
+                        elif isinstance(res, (list, tuple)):
+                            items = list(res)
                     elif hasattr(self.mass.music, "get_library_radios"):
-                        items = await self.mass.music.get_library_radios()
-                    else:
-                        items = []
+                        res = self.mass.music.get_library_radios()
+                        if asyncio.iscoroutine(res):
+                            items = await res
+                        elif isinstance(res, (list, tuple)):
+                            items = list(res)
+
                     for r in items:
                         item_id = str(getattr(r, "item_id", len(radios) + 1))
+                        name = getattr(r, "name", "Radio Station")
                         uri = getattr(r, "uri", None) or f"library://radio/{item_id}"
-                        cover = ""
-                        if img := getattr(r, "image", None):
-                            cover = getattr(img, "path", "") or str(img)
-                        elif hasattr(r, "metadata") and getattr(r.metadata, "images", None):
-                            cover = r.metadata.images[0].path if r.metadata.images else ""
-                        radios.append({
+                        stream_url = ""
+                        if hasattr(r, "provider_mappings") and r.provider_mappings:
+                            for pm in r.provider_mappings:
+                                if hasattr(pm, "url") and pm.url and (pm.url.startswith("http://") or pm.url.startswith("https://")):
+                                    stream_url = pm.url
+                                    break
+                        cover = _get_item_cover_url(r, fallback="")
+                        is_fav = bool(getattr(r, "favorite", False))
+
+                        station_entry = {
                             "id": item_id,
-                            "name": getattr(r, "name", "Radio Station"),
+                            "name": name,
+                            "station": name,
                             "cover": cover,
-                            "station": getattr(r, "name", ""),
+                            "coverurl": cover,
+                            "thumbnail": cover,
                             "audiopath": uri,
-                        })
+                            "stream_url": stream_url,
+                            "favorite": is_fav,
+                            "type": 2,
+                        }
+                        radios.append(station_entry)
+
+                        # Register in _radio_catalog for quick metadata resolution when played
+                        self._radio_catalog[item_id] = station_entry
+                        self._radio_catalog[uri] = station_entry
+                        if stream_url:
+                            self._radio_catalog[stream_url] = station_entry
+                        self._radio_catalog[name.lower()] = station_entry
                 except Exception as exc:
                     LOGGER.debug("Error getting radios: %s", exc)
+
+            # Sort favorites to top
+            radios.sort(key=lambda x: (not x.get("favorite", False), x.get("name", "").lower()))
+
+            # Register DEFAULT_RADIO_STATIONS in _radio_catalog as well
+            for st in DEFAULT_RADIO_STATIONS:
+                self._radio_catalog[st["id"]] = st
+                self._radio_catalog[st["audiopath"]] = st
+                self._radio_catalog[st["name"].lower()] = st
+
             return radios
 
         async def get_playlists(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
@@ -316,11 +710,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
                     for p in items:
                         item_id = str(getattr(p, "item_id", len(playlists) + 1))
                         uri = getattr(p, "uri", None) or f"library://playlist/{item_id}"
-                        cover = ""
-                        if img := getattr(p, "image", None):
-                            cover = getattr(img, "path", "") or str(img)
-                        elif hasattr(p, "metadata") and getattr(p.metadata, "images", None):
-                            cover = p.metadata.images[0].path if p.metadata.images else ""
+                        cover = _get_item_cover_url(p, fallback="")
                         playlists.append({
                             "id": item_id,
                             "name": getattr(p, "name", "Playlist"),
@@ -343,11 +733,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
                     for a in items:
                         item_id = str(getattr(a, "item_id", len(albums) + 1))
                         uri = getattr(a, "uri", None) or f"library://album/{item_id}"
-                        cover = ""
-                        if img := getattr(a, "image", None):
-                            cover = getattr(img, "path", "") or str(img)
-                        elif hasattr(a, "metadata") and getattr(a.metadata, "images", None):
-                            cover = a.metadata.images[0].path if a.metadata.images else ""
+                        cover = _get_item_cover_url(a, fallback="")
                         artist_name = ""
                         if hasattr(a, "artists") and a.artists:
                             artist_name = getattr(a.artists[0], "name", "")
@@ -375,11 +761,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
                     for ar in items:
                         item_id = str(getattr(ar, "item_id", len(artists) + 1))
                         uri = getattr(ar, "uri", None) or f"library://artist/{item_id}"
-                        cover = ""
-                        if img := getattr(ar, "image", None):
-                            cover = getattr(img, "path", "") or str(img)
-                        elif hasattr(ar, "metadata") and getattr(ar.metadata, "images", None):
-                            cover = ar.metadata.images[0].path if ar.metadata.images else ""
+                        cover = _get_item_cover_url(ar, fallback="")
                         artists.append({
                             "id": item_id,
                             "name": getattr(ar, "name", "Artist"),
@@ -418,16 +800,30 @@ class LoxoneMusicServerPlugin(PluginProvider):
             elif target_media.startswith("artist:"):
                 target_media = f"library://artist/{target_media.split(':', 1)[1]}"
 
+            # Look up station metadata from _radio_catalog or DEFAULT_RADIO_STATIONS
             station_info = None
-            for station in DEFAULT_RADIO_STATIONS:
-                if (
-                    target_media == station["id"]
-                    or target_media == f"radio:{station['id']}"
-                    or target_media == station["audiopath"]
-                ):
-                    target_media = station["audiopath"]
-                    station_info = station
-                    break
+            if target_media in self._radio_catalog:
+                station_info = self._radio_catalog[target_media]
+            elif target_media.startswith("library://radio/"):
+                rad_id = target_media.split("/")[-1]
+                station_info = self._radio_catalog.get(rad_id)
+            elif target_media.startswith("radio:"):
+                rad_id = target_media.split(":", 1)[1]
+                station_info = self._radio_catalog.get(rad_id)
+
+            if not station_info:
+                for station in DEFAULT_RADIO_STATIONS:
+                    if (
+                        target_media == station["id"]
+                        or target_media == f"radio:{station['id']}"
+                        or target_media == station["audiopath"]
+                    ):
+                        station_info = station
+                        break
+
+            if station_info and station_info.get("audiopath"):
+                if station_info["audiopath"].startswith("http://") or station_info["audiopath"].startswith("https://"):
+                    target_media = station_info["audiopath"]
 
             target_parent = parent
             if target_parent:
@@ -471,11 +867,11 @@ class LoxoneMusicServerPlugin(PluginProvider):
                     state.mode = "play"
                     state.audiopath = target_media
                     if station_info:
-                        state.station = station_info["name"]
-                        state.title = station_info["name"]
+                        state.station = station_info.get("station") or station_info.get("name", "")
+                        state.title = station_info.get("name", "")
                         state.artist = "Radio"
                         state.album = ""
-                        state.coverurl = station_info.get("cover", "")
+                        state.coverurl = station_info.get("cover") or station_info.get("coverurl", "")
                         state.audiotype = 2
                         state.type = 2
                     if self.notifier:
@@ -550,14 +946,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
             if hasattr(t, "album") and t.album:
                 album_name = getattr(t.album, "name", "") or str(t.album or "")
 
-            img_path = ""
-            if img := getattr(t, "image", None):
-                img_path = getattr(img, "path", "") or str(img)
-            elif hasattr(t, "metadata") and getattr(t.metadata, "images", None):
-                img_path = t.metadata.images[0].path if t.metadata.images else ""
-            elif hasattr(t, "album") and t.album:
-                if alb_img := getattr(t.album, "image", None):
-                    img_path = getattr(alb_img, "path", "") or str(alb_img)
+            img_path = _get_item_cover_url(t, fallback="")
 
             uri = getattr(t, "uri", None) or f"library://track/{tid}"
 

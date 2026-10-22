@@ -374,22 +374,27 @@ class FavoriteHandlers:
             folder_name = raw_tracks[0].get("artist") if raw_tracks and raw_tracks[0].get("artist") else f"Künstler {artist_id}"
             items.extend(raw_tracks)
         elif service in ("local", "custom", "music", "world", "loxoneradio", "radio", "tunein"):
+            raw_radios = await self._get_radios()
             if folder_path == "local" or service == "local":
                 folder_name = "Lokale Sender"
+                station_list = raw_radios if raw_radios else list(DEFAULT_RADIO_STATIONS)
             elif folder_path == "custom" or service == "custom":
                 folder_name = "Meine Sender"
-            elif folder_path == "music" or service == "music":
-                folder_name = "Musik"
-            elif folder_path == "world" or service == "world":
-                folder_name = "Länder"
+                # Show Music Assistant library radios / favorites first; fallback to default stations if none exist
+                fav_radios = [r for r in raw_radios if r.get("favorite")]
+                station_list = fav_radios if fav_radios else raw_radios
+                if not station_list:
+                    station_list = list(DEFAULT_RADIO_STATIONS)
             else:
-                folder_name = "Radio"
+                if folder_path == "music" or service == "music":
+                    folder_name = "Musik"
+                elif folder_path == "world" or service == "world":
+                    folder_name = "Länder"
+                else:
+                    folder_name = "Radio"
+                station_list = raw_radios if raw_radios else list(DEFAULT_RADIO_STATIONS)
 
-            raw_radios = await self._get_radios()
-            if not raw_radios:
-                raw_radios = list(DEFAULT_RADIO_STATIONS)
-
-            for r in raw_radios:
+            for r in station_list:
                 cov = r.get("cover") or r.get("coverurl") or ""
                 items.append({
                     "id": str(r.get("id") or r.get("item_id", len(items) + 1)),
@@ -506,10 +511,9 @@ class FavoriteHandlers:
             elif folder_path in ("2", "radios", "folder:radios"):
                 folder_name = "Radiosender"
                 raw_radios = await self._get_radios()
-                if not raw_radios:
-                    raw_radios = list(DEFAULT_RADIO_STATIONS)
+                station_list = raw_radios if raw_radios else list(DEFAULT_RADIO_STATIONS)
 
-                for r in raw_radios:
+                for r in station_list:
                     cov = r.get("cover") or r.get("coverurl") or ""
                     items.append({
                         "id": str(r.get("id") or r.get("item_id", len(items) + 1)),
