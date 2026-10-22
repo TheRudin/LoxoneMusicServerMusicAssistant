@@ -5,9 +5,9 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      - MA_URL=http://192.168.1.10:8095
-      - MA_USERNAME=admin
-      - MA_PASSWORD=your_password
+      - MA_URL=${MA_URL:-http://localhost:8095}
+      - MA_USERNAME=${MA_USERNAME:-admin}
+      - MA_PASSWORD=${MA_PASSWORD:-your_password}
       - LOXONE_HOST=0.0.0.0
       - LOXONE_APP_PORT=7091
       - LOXONE_MS_PORT=7095

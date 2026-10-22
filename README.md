@@ -93,7 +93,7 @@ pip install -r requirements.txt
 
 # Start the emulator
 python3 -m loxone_musicserver.main \
-  --ma-url http://192.168.1.10:8095 \
+  --ma-url http://<music-assistant-ip>:8095 \
   --username admin \
   --password "your_password"
 ```
@@ -112,9 +112,9 @@ Command line arguments and environment variables:
 
 | CLI Option | Environment Variable | Default | Description |
 |---|---|---|---|
-| `--ma-url` | `MA_URL` | `http://192.168.1.10:8095` | URL to Music Assistant Server |
+| `--ma-url` | `MA_URL` | `http://localhost:8095` | URL to Music Assistant Server |
 | `--username` | `MA_USERNAME` | `admin` | Music Assistant username |
-| `--password` | `MA_PASSWORD` | `your_password` | Music Assistant password |
+| `--password` | `MA_PASSWORD` | `""` | Music Assistant password |
 | `--token` | `MA_TOKEN` | `""` | Long-lived access token (optional) |
 | `--host` | `LOXONE_HOST` | `0.0.0.0` | Host IP to bind to |
 | `--app-port` | `LOXONE_APP_PORT` | `7091` | Loxone App HTTP/WS port |

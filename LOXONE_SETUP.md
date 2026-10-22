@@ -84,7 +84,7 @@ In Unraid läuft Music Assistant als Docker-Container. Um das Plugin direkt in M
    - **Zugriffsmodus:** Lesen/Schreiben
 
 3. **Plugin aktivieren:**
-   - Öffnen Sie Music Assistant (`http://192.168.1.10:8095`).
+   - Öffnen Sie Music Assistant (z. B. `http://<music-assistant-ip>:8095`).
    - Gehen Sie auf **Einstellungen** -> **Plugins** -> **Plugin hinzufügen**.
    - Wählen Sie **Loxone Music Server** aus.
    - Passen Sie optional Einstellungen (Name, Ports) an und klicken Sie auf **Speichern**.
@@ -98,7 +98,7 @@ Der Emulator kann auch als unabhängiger Hintergrunddienst oder Docker-Container
 
 ```bash
 # Mit virtueller Umgebung oder lokalem Python:
-python3 -m loxone_musicserver.main --ma-url http://192.168.1.10:8095 --username admin --password "your_password"
+python3 -m loxone_musicserver.main --ma-url http://<music-assistant-ip>:8095 --username admin --password "your_password"
 
 # Oder via Docker Compose:
 docker compose up -d

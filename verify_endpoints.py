@@ -22,6 +22,18 @@ from loxone_musicserver.loxone.handlers.queue_handlers import QueueHandlers
 from loxone_musicserver.loxone.handlers.secure_handlers import SecureHandlers
 from loxone_musicserver.loxone.handlers.zone_handlers import ZoneHandlers
 
+import os
+from pathlib import Path
+
+# Load local .env if present
+env_file = Path(__file__).parent / ".env"
+if env_file.exists():
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+
 results = []
 
 def record(name: str, passed: bool, details: str = ""):
@@ -35,9 +47,9 @@ async def run_verification():
     print("============================================================")
     
     cfg = ServerConfig(
-        ma_url="http://192.168.1.10:8095",
-        ma_username="admin",
-        ma_password="your_password",
+        ma_url=os.environ.get("MA_URL", "http://localhost:8095"),
+        ma_username=os.environ.get("MA_USERNAME", "admin"),
+        ma_password=os.environ.get("MA_PASSWORD", ""),
         app_port=7091,
         ms_port=7095,
         discovery_port=7070,

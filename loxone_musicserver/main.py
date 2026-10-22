@@ -36,18 +36,18 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ma-url",
-        default=os.environ.get("MA_URL", "http://192.168.1.10:8095"),
-        help="Music Assistant server URL (default: http://192.168.1.10:8095)",
+        default=os.environ.get("MA_URL", "http://localhost:8095"),
+        help="Music Assistant server URL (default: http://localhost:8095 or MA_URL)",
     )
     parser.add_argument(
         "--username",
         default=os.environ.get("MA_USERNAME", "admin"),
-        help="Music Assistant username (default: admin)",
+        help="Music Assistant username (default: admin or MA_USERNAME)",
     )
     parser.add_argument(
         "--password",
-        default=os.environ.get("MA_PASSWORD", "your_password"),
-        help="Music Assistant password",
+        default=os.environ.get("MA_PASSWORD", ""),
+        help="Music Assistant password (or MA_PASSWORD)",
     )
     parser.add_argument(
         "--token",

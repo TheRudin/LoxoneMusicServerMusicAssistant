@@ -35,10 +35,10 @@ class ServerConfig:
     discovery_port: int = 7070
 
     # Music Assistant connection
-    ma_url: str = "http://192.168.1.10:8095"
-    ma_username: str = "admin"
-    ma_password: str = "your_password"
-    ma_token: str = ""
+    ma_url: str = field(default_factory=lambda: os.environ.get("MA_URL", "http://localhost:8095"))
+    ma_username: str = field(default_factory=lambda: os.environ.get("MA_USERNAME", "admin"))
+    ma_password: str = field(default_factory=lambda: os.environ.get("MA_PASSWORD", ""))
+    ma_token: str = field(default_factory=lambda: os.environ.get("MA_TOKEN", ""))
 
     # Storage
     data_dir: Path = field(default_factory=lambda: Path(os.environ.get("LOXONE_DATA_DIR", "./data")))
