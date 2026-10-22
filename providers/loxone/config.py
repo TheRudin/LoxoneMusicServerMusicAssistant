@@ -23,8 +23,8 @@ class ServerConfig:
     # Server identification
     server_name: str = "MusicAssistant-AudioServer"
     mac_address: str = field(default_factory=get_default_mac)
-    firmware_version_number: str = "17.1.05.05"
-    mdns_version: str = "16.00.09.16"
+    firmware_version_number: str = "17.2.08.28"
+    mdns_version: str = "17.02.08.28"
     api_version: str = "~API:1.6~"
     session_token: str = "8WahwAfULwEQce9Yu0qIE9L7QMkXFHbi0M9ch9vKcgYArPPojXHpSiNcq0fT3lqL"
 

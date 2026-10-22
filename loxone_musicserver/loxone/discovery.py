@@ -37,13 +37,24 @@ class LoxoneUdpDiscoveryProtocol(asyncio.DatagramProtocol):
         logger.info("UDP discovery responder listening on port %d", self.config.discovery_port)
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        logger.debug("Received UDP discovery probe from %s:%d (%d bytes)", addr[0], addr[1], len(data))
+        logger.info("Received UDP discovery probe from %s:%d (%d bytes)", addr[0], addr[1], len(data))
         if self.transport:
             try:
                 self.transport.sendto(self.response_payload, addr)
                 logger.debug("Sent UDP discovery response to %s:%d", addr[0], addr[1])
             except Exception as exc:
                 logger.warning("Failed to send UDP discovery response to %s:%d: %s", addr[0], addr[1], exc)
+
+            if addr[1] != 7071:
+                try:
+                    self.transport.sendto(self.response_payload, (addr[0], 7071))
+                except Exception:
+                    pass
+
+            try:
+                self.transport.sendto(self.response_payload, ("255.255.255.255", 7071))
+            except Exception:
+                pass
 
 
 class LoxoneDiscoveryService:
