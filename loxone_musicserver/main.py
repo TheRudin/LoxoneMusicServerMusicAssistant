@@ -187,6 +187,7 @@ async def run_daemon(args: argparse.Namespace) -> None:
     )
 
     # 5. Start Servers
+    notifier.set_router(router)
     server = LoxoneServer(config, router, notifier)
     discovery = LoxoneDiscoveryService(config)
 

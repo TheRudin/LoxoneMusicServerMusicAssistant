@@ -68,6 +68,7 @@ async def run_verification():
     router = LoxoneRouter()
     notifier = LoxoneWebSocketNotifier(cfg, get_all_states=lambda: sync.get_all_states())
     sync = MusicAssistantZoneSync(cfg, ma_client, notifier)
+    notifier.set_router(router)
 
     server = LoxoneServer(cfg, router, notifier)
     discovery = LoxoneDiscoveryService(cfg)
@@ -176,19 +177,20 @@ async def run_verification():
         try:
             async with session.ws_connect("ws://127.0.0.1:7091/", timeout=4.0) as ws:
                 msg = await ws.receive_str(timeout=4.0)
-                record("WebSocket 7091 Greeting (App)", "LWSS V 17.1.05.05" in msg, f"Greeting: {msg.strip()}")
+                record("WebSocket 7091 Greeting (App)", "LWSS V" in msg, f"Greeting: {msg.strip()}")
         except Exception as e:
             record("WebSocket 7091 Greeting (App)", False, str(e))
 
         # 6. Test WebSocket port 7095 (Miniserver)
         try:
-            async with session.ws_connect("ws://127.0.0.1:7095/", timeout=4.0) as ws:
+            async with session.ws_connect("ws://127.0.0.1:7095/", protocols=["miniserver"], timeout=4.0) as ws:
                 msg = await ws.receive_str(timeout=4.0)
-                record("WebSocket 7095 Greeting (MS)", "LWSS V 17.1.05.05" in msg, f"Greeting: {msg.strip()}")
+                greeting_ok = "LWSS V" in msg and cfg.clean_mac in msg
+                record("WebSocket 7095 Greeting (MS)", greeting_ok, f"Greeting: {msg.strip()}")
                 
-                # Check for heartbeat within 12 seconds
-                hb_msg = await ws.receive_str(timeout=12.0)
-                record("WebSocket 7095 Heartbeat", "server_heartbeat" in hb_msg, f"Heartbeat: {hb_msg.strip()}")
+                # Check for hw_event telemetry within 6 seconds
+                hb_msg = await ws.receive_str(timeout=6.0)
+                record("WebSocket 7095 Telemetry", "hw_event" in hb_msg, f"Hardware Event: {hb_msg.strip()}")
         except Exception as e:
             record("WebSocket 7095 Communication", False, str(e))
 

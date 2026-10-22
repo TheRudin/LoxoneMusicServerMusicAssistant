@@ -46,6 +46,12 @@ class TestHandlers(unittest.TestCase):
 
             res_ident = await self.cfg.identify("audio/cfg/identify")
             self.assertIn("mac", res_ident.payload)
+            self.assertEqual(res_ident.payload["mac"], self.config.clean_mac)
+            self.assertNotIn(":", res_ident.payload["mac"])
+
+            ident_ms = self.config.get_identification("msHttp")
+            self.assertIn(f"MINISERVER V {self.config.firmware_version} {self.config.clean_mac}", ident_ms)
+            self.assertNotIn(f"{self.config.formatted_mac}", ident_ms)
 
         asyncio.run(run())
 

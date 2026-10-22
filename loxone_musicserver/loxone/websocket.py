@@ -7,11 +7,12 @@ import json
 import logging
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from aiohttp import web
 
 from ..config import ServerConfig
+from .responses import serialize_result
 
 logger = logging.getLogger("loxone.websocket")
 
@@ -55,12 +56,37 @@ class LoxoneZoneState:
 class LoxoneWebSocketNotifier:
     """Manages active WebSocket connections and broadcasts zone state updates."""
 
-    def __init__(self, config: ServerConfig, get_all_states: Callable[[], List[LoxoneZoneState]]) -> None:
+    def __init__(
+        self,
+        config: ServerConfig,
+        get_all_states: Callable[[], List[LoxoneZoneState]],
+        router: Optional[Any] = None,
+    ) -> None:
         self.config = config
         self.get_all_states = get_all_states
+        self.router = router
         self.connections: Set[Tuple[web.WebSocketResponse, str]] = set()
         self._heartbeat_task: Optional[asyncio.Task[None]] = None
         self._running = False
+        self._start_time = time.time()
+
+    def set_router(self, router: Any) -> None:
+        """Sets or updates the router for WS command dispatch."""
+        self.router = router
+
+    def _build_hw_events(self) -> List[Dict[str, Any]]:
+        """Constructs hardware telemetry events expected by Miniserver."""
+        uptime = int(time.time() - self._start_time)
+        client_id = f"{self.config.clean_mac}#1"
+        return [
+            {"client_id": client_id, "event_id": 2005, "value": 0},
+            {"client_id": client_id, "event_id": 2101, "value": 67},
+            {"client_id": client_id, "event_id": 2100, "value": 0},
+            {"client_id": client_id, "event_id": 2102, "value": 0},
+            {"client_id": client_id, "event_id": 2103, "value": 0},
+            {"client_id": client_id, "event_id": 2105, "value": uptime},
+            {"client_id": client_id, "event_id": 2106, "value": 56},
+        ]
 
     async def start(self) -> None:
         """Starts the periodic heartbeat task."""
@@ -87,31 +113,55 @@ class LoxoneWebSocketNotifier:
 
     async def handle_connection(self, request: web.Request, server_name: str) -> web.WebSocketResponse:
         """Upgrades HTTP connection to WebSocket and registers the client."""
-        ws = web.WebSocketResponse(heartbeat=30.0)
+        # Support requested subprotocols (specifically 'miniserver' requested by Loxone Miniserver)
+        requested_proto = request.headers.get("Sec-WebSocket-Protocol")
+        protocols: tuple[str, ...] = (
+            tuple(p.strip() for p in requested_proto.split(","))
+            if requested_proto
+            else ("miniserver",)
+        )
+        ws = web.WebSocketResponse(heartbeat=30.0, protocols=protocols)
         await ws.prepare(request)
 
         entry = (ws, server_name)
         self.connections.add(entry)
-        logger.info("Loxone WebSocket connected on %s from %s (total: %d)", server_name, request.remote, len(self.connections))
+        logger.info(
+            "Loxone WebSocket connected on %s from %s (total: %d)",
+            server_name,
+            request.remote,
+            len(self.connections),
+        )
 
         try:
             # 1. Send identification string
             greeting = self.config.get_identification(server_name)
             await ws.send_str(greeting)
 
-            # 2. If msHttp, send heartbeat immediately
+            # 2. If msHttp, send hw_event hardware status immediately
             if server_name == "msHttp":
-                await ws.send_str(json.dumps({"server_heartbeat": {"time": int(time.time())}}))
+                hw_payload = json.dumps({"hw_event": self._build_hw_events()})
+                await ws.send_str(hw_payload)
 
             # 3. Send current state of all zones on connect
-            states = [s.to_dict() for s in self.get_all_states()]
-            if states:
-                await ws.send_str(json.dumps({"audio_event": states}))
+            for state in self.get_all_states():
+                try:
+                    await ws.send_str(json.dumps({"audio_event": [state.to_dict()]}))
+                except Exception:
+                    break
 
-            # 4. Listen for incoming messages from client (if any)
+            # 4. Listen for incoming messages and execute commands via router
             async for msg in ws:
                 if msg.type == web.WSMsgType.TEXT:
-                    logger.debug("Received WS text from %s: %s", server_name, msg.data)
+                    command = msg.data.strip()
+                    logger.debug("Received WS text from %s: %s", server_name, command)
+                    if command and self.router:
+                        try:
+                            result = await self.router.dispatch(command)
+                            response_text = serialize_result(result)
+                            await ws.send_str(response_text)
+                        except Exception as exc:
+                            logger.warning("Error processing WS command '%s': %s", command, exc)
+                            await ws.send_str("")
                 elif msg.type == web.WSMsgType.ERROR:
                     logger.warning("WS connection error on %s: %s", server_name, ws.exception())
         finally:
@@ -167,12 +217,11 @@ class LoxoneWebSocketNotifier:
         while self._running:
             try:
                 await asyncio.sleep(10.0)
-                heartbeat = json.dumps({"server_heartbeat": {"time": int(time.time())}})
-                # Send heartbeat specifically to msHttp sockets (or all)
+                hw_payload = json.dumps({"hw_event": self._build_hw_events()})
                 for ws, srv in list(self.connections):
                     if srv == "msHttp":
                         try:
-                            await ws.send_str(heartbeat)
+                            await ws.send_str(hw_payload)
                         except Exception:
                             self.connections.discard((ws, srv))
             except asyncio.CancelledError:

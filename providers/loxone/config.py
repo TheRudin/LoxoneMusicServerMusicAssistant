@@ -48,8 +48,13 @@ class ServerConfig:
         return f"LWSS V {self.firmware_version_number}"
 
     @property
+    def clean_mac(self) -> str:
+        """Returns uppercase 12-char hex MAC without colons or dashes."""
+        return self.mac_address.replace(":", "").replace("-", "").upper()
+
+    @property
     def formatted_mac(self) -> str:
-        raw = self.mac_address.replace(":", "").replace("-", "").upper()
+        raw = self.clean_mac
         if len(raw) == 12:
             return ":".join(raw[i : i + 2] for i in range(0, 12, 2))
         return self.mac_address
@@ -57,7 +62,7 @@ class ServerConfig:
     def get_identification(self, server_name: str) -> str:
         """Returns the identification string sent upon WebSocket connect."""
         if server_name == "msHttp":
-            base = f"MINISERVER V {self.firmware_version} {self.formatted_mac}"
+            base = f"MINISERVER V {self.firmware_version} {self.clean_mac}"
         else:
             base = self.firmware_version
         return f"{base} | {self.api_version} | Session-Token: {self.session_token}"

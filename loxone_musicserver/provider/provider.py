@@ -59,6 +59,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
         self.notifier = LoxoneWebSocketNotifier(
             self.server_config,
             get_all_states=lambda: list(self.zone_states.values()),
+            router=self.router,
         )
         self.discovery = LoxoneDiscoveryService(self.server_config)
         self.server = LoxoneServer(self.server_config, self.router, self.notifier)

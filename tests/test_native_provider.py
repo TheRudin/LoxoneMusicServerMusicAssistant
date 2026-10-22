@@ -54,6 +54,13 @@ class TestNativeLoxoneProvider(unittest.IsolatedAsyncioTestCase):
         # Verify event subscription
         self.mock_mass.subscribe.assert_called_once()
 
+        # Verify notifier is wired with router and clean_mac
+        self.assertEqual(plugin.notifier.router, plugin.router)
+        self.assertNotIn(":", plugin.server_config.clean_mac)
+        hw_events = plugin.notifier._build_hw_events()
+        self.assertEqual(len(hw_events), 7)
+        self.assertEqual(hw_events[0]["client_id"], f"{plugin.server_config.clean_mac}#1")
+
         # Teardown
         await plugin.unload()
         plugin.server.stop.assert_awaited_once()

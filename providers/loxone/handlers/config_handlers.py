@@ -71,7 +71,7 @@ class ConfigHandlers:
         return build_response(
             command,
             "identify",
-            {"mac": self.config.formatted_mac, "services": []},
+            {"mac": self.config.clean_mac, "services": []},
         )
 
     async def get_config(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
