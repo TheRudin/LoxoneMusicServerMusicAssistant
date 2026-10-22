@@ -26,6 +26,19 @@ class TestHandlers(unittest.TestCase):
             res_info = await self.secure.info_pairing("secure/info/pairing")
             self.assertEqual(res_info.payload["master"], "TEST_SERIAL_123")
 
+            # Verify colons and hyphens in master serial are stripped
+            sec_colons = SecureHandlers("50:4F:94:D0:1A:6D")
+            self.assertEqual(sec_colons.clean_master, "504F94D01A6D")
+            info_colons = await sec_colons.info_pairing("secure/info/pairing")
+            self.assertEqual(info_colons.payload["master"], "504F94D01A6D")
+
+            # Verify SecureHandlers linked with ServerConfig dynamically syncs
+            cfg_dyn = ServerConfig(master_serial="50:4F:94:D0:1A:6D")
+            sec_linked = SecureHandlers(config=cfg_dyn)
+            self.assertEqual(sec_linked.clean_master, "504F94D01A6D")
+            cfg_dyn.master_serial = "MS1A6D"
+            self.assertEqual(sec_linked.clean_master, "MS1A6D")
+
             res_auth = await self.secure.authenticate("secure/authenticate")
             self.assertEqual(res_auth.payload, "authentication successful")
 
@@ -34,6 +47,12 @@ class TestHandlers(unittest.TestCase):
             self.assertIn("jwt", res_init.payload)
 
         asyncio.run(run())
+
+    def test_default_mac(self):
+        cfg = ServerConfig()
+        self.assertEqual(cfg.mac_address, "79:F8:74:AD:39:43")
+        self.assertEqual(cfg.clean_mac, "79F874AD3943")
+        self.assertEqual(cfg.formatted_mac, "79:F8:74:AD:39:43")
 
     def test_config_endpoints(self):
         async def run():

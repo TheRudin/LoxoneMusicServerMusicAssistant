@@ -9,12 +9,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+DEFAULT_MAC_ADDRESS = "79:F8:74:AD:39:43"
+
+
 def get_default_mac() -> str:
     """Returns a stable MAC-like address."""
-    node = uuid.getnode()
-    mac = ":".join(f"{(node >> i) & 0xff:02X}" for i in range(40, -1, -8))
-    # Ensure locally administered unicast bit
-    return mac
+    if env_mac := os.environ.get("LOXONE_MAC"):
+        return env_mac.strip()
+    return DEFAULT_MAC_ADDRESS
 
 
 @dataclass
@@ -64,6 +66,11 @@ class ServerConfig:
         if len(raw) == 12:
             return ":".join(raw[i : i + 2] for i in range(0, 12, 2))
         return self.mac_address
+
+    @property
+    def clean_master_serial(self) -> str:
+        """Returns uppercase alphanumeric Miniserver serial without colons or dashes."""
+        return self.master_serial.replace(":", "").replace("-", "").strip().upper()
 
     def get_identification(self, server_name: str) -> str:
         """Returns the identification string sent upon WebSocket connect."""

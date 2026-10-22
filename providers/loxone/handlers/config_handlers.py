@@ -65,7 +65,8 @@ class ConfigHandlers:
             data = {
                 "uuid": self.config.uuid,
                 "miniserver_ip": self.config.miniserver_ip,
-                "master_serial": self.config.master_serial,
+                "master_serial": self.config.clean_master_serial,
+                "mac_address": self.config.formatted_mac,
                 "crc32": self.current_crc32,
                 "server_name": self.config.server_name,
                 "last_startup_ping": self.config.last_startup_ping,
@@ -88,16 +89,19 @@ class ConfigHandlers:
                 if (not self.config.miniserver_ip or self.config.miniserver_ip == "192.168.1.107") and data.get("miniserver_ip"):
                     self.config.miniserver_ip = str(data["miniserver_ip"])
                 if not self.config.master_serial and data.get("master_serial"):
-                    self.config.master_serial = str(data["master_serial"])
+                    self.config.master_serial = str(data["master_serial"]).replace(":", "").replace("-", "").strip().upper()
+                if data.get("mac_address"):
+                    self.config.mac_address = str(data["mac_address"]).strip()
                 if not self.current_crc32 and data.get("crc32"):
                     self.current_crc32 = str(data["crc32"])
                 if data.get("last_startup_ping"):
                     self.config.last_startup_ping = data["last_startup_ping"]
                 logger.info(
-                    "Loaded persisted Loxone state: uuid=%s, ms_ip=%s, master=%s",
+                    "Loaded persisted Loxone state: uuid=%s, ms_ip=%s, master=%s, mac=%s",
                     self.config.uuid,
                     self.config.miniserver_ip,
-                    self.config.master_serial,
+                    self.config.clean_master_serial,
+                    self.config.mac_address,
                 )
         except Exception as exc:
             logger.debug("Failed to load loxone_state.json: %s", exc)
@@ -304,7 +308,7 @@ class ConfigHandlers:
                 "clean_mac": self.config.clean_mac,
                 "uptime": int(time.time()),
                 "paired": bool(self.config.master_serial),
-                "master_serial": self.config.master_serial,
+                "master_serial": self.config.clean_master_serial,
                 "miniserver_ip": self.config.miniserver_ip,
                 "uuid": self.config.uuid,
                 "last_startup_ping": self.config.last_startup_ping,

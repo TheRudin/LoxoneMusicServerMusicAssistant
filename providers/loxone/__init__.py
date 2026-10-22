@@ -201,9 +201,9 @@ class LoxonePlugin(PluginProvider):
         if uport := _get_val(CONF_UDP_PORT):
             self.server_config.discovery_port = int(uport)
         if mac := _get_val(CONF_MAC_ADDRESS):
-            self.server_config.mac_address = str(mac)
+            self.server_config.mac_address = str(mac).strip()
         if mserial := _get_val(CONF_MINISERVER_SERIAL):
-            self.server_config.master_serial = str(mserial).strip()
+            self.server_config.master_serial = str(mserial).replace(":", "").replace("-", "").strip().upper()
         if ms_ip := _get_val(CONF_MINISERVER_IP):
             self.server_config.miniserver_ip = str(ms_ip).strip()
 
@@ -313,7 +313,7 @@ class LoxonePlugin(PluginProvider):
 
     def _register_routes(self) -> None:
         """Registers all Loxone command routes."""
-        secure = SecureHandlers(self.server_config.master_serial)
+        secure = SecureHandlers(self.server_config.clean_master_serial, config=self.server_config)
         self.secure = secure
         cfg = ConfigHandlers(self.server_config, self.crypto, self._apply_loxone_config, notifier=self.notifier)
         self.cfg = cfg

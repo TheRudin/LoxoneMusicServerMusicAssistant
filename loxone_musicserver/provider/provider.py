@@ -147,7 +147,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
 
     def _register_routes(self) -> None:
         """Registers all Loxone command routes."""
-        secure = SecureHandlers()
+        secure = SecureHandlers(self.server_config.clean_master_serial, config=self.server_config)
         self.secure = secure
         cfg = ConfigHandlers(self.server_config, self.crypto, self._apply_loxone_config, notifier=self.notifier)
         self.cfg = cfg

@@ -19,13 +19,23 @@ LEGACY_JWT = (
 class SecureHandlers:
     """Implements secure/* endpoints for Loxone pairing and session setup."""
 
-    def __init__(self, master_serial: str = "") -> None:
-        self.master_serial = master_serial
+    def __init__(self, master_serial: str = "", config: Optional[Any] = None) -> None:
+        self.config = config
+        self.master_serial = master_serial.replace(":", "").replace("-", "").strip().upper()
 
     def set_master(self, serial: str) -> None:
         """Sets the paired Miniserver master serial."""
-        self.master_serial = serial.strip()
-        logger.info("Pairing updated: master Miniserver is '%s'", self.master_serial)
+        clean = serial.replace(":", "").replace("-", "").strip().upper()
+        self.master_serial = clean
+        if self.config:
+            self.config.master_serial = clean
+        logger.info("Pairing updated: master Miniserver is '%s'", clean)
+
+    @property
+    def clean_master(self) -> str:
+        if self.config and getattr(self.config, "master_serial", None):
+            return getattr(self.config, "clean_master_serial", "").replace(":", "").replace("-", "").strip().upper()
+        return self.master_serial.replace(":", "").replace("-", "").strip().upper()
 
     async def hello(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         parts = command.strip("/").split("/")
@@ -47,7 +57,7 @@ class SecureHandlers:
             {
                 "command": "secure/infopairing",
                 "error": -81,
-                "master": self.master_serial.upper() if self.master_serial else "",
+                "master": self.clean_master,
                 "peers": [],
             },
             raw=True,
