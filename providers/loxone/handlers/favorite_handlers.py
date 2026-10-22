@@ -72,6 +72,45 @@ DEFAULT_RADIO_STATIONS: List[Dict[str, Any]] = [
 ]
 
 
+def extract_service_play_media(command: str) -> tuple[int, str, Optional[bool]]:
+    """Extracts zone_id, clean media URI, and optional shuffle flag from a serviceplay command."""
+    sp_idx = command.find("serviceplay/")
+    if sp_idx == -1:
+        return 1, "", None
+
+    prefix = command[:sp_idx].strip("/")
+    zparts = prefix.split("/")
+    zone_id = 1
+    for p in reversed(zparts):
+        if p.isdigit():
+            zone_id = int(p)
+            break
+
+    rest = command[sp_idx + len("serviceplay/") :]
+    parts = rest.split("/", 2)
+    raw_media = parts[2] if len(parts) >= 3 else parts[-1]
+    raw_media = raw_media.split("?")[0].rstrip("/")
+
+    shuffle: Optional[bool] = None
+    if raw_media.endswith("/shuffle"):
+        shuffle = True
+        raw_media = raw_media[:-8]
+    elif raw_media.endswith("/noshuffle"):
+        shuffle = False
+        raw_media = raw_media[:-10]
+
+    raw_media = raw_media.rstrip("/")
+    decoded = unquote(raw_media)
+    if "://" in decoded:
+        proto, path = decoded.split("://", 1)
+        decoded = f"{proto}://{path.lstrip('/')}"
+    elif ":/" in decoded:
+        proto, path = decoded.split(":/", 1)
+        decoded = f"{proto}://{path.lstrip('/')}"
+
+    return zone_id, decoded, shuffle
+
+
 class FavoriteHandlers:
     """Handles room favorites, radio streams, playlists, and direct service playback."""
 
@@ -86,6 +125,8 @@ class FavoriteHandlers:
         get_albums: Optional[Callable[[int, int], Awaitable[List[Dict[str, Any]]]]] = None,
         get_artists: Optional[Callable[[int, int], Awaitable[List[Dict[str, Any]]]]] = None,
         get_playlist_tracks: Optional[Callable[[str], Awaitable[List[Dict[str, Any]]]]] = None,
+        get_album_tracks: Optional[Callable[[str], Awaitable[List[Dict[str, Any]]]]] = None,
+        get_artist_tracks: Optional[Callable[[str], Awaitable[List[Dict[str, Any]]]]] = None,
     ) -> None:
         self.get_favorites = get_favorites
         self.play_favorite = play_favorite
@@ -96,6 +137,8 @@ class FavoriteHandlers:
         self._get_albums = get_albums
         self._get_artists = get_artists
         self._get_playlist_tracks = get_playlist_tracks
+        self._get_album_tracks = get_album_tracks
+        self._get_artist_tracks = get_artist_tracks
 
     async def get_room_favs(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         """Returns room favorites for a zone."""
@@ -247,27 +290,64 @@ class FavoriteHandlers:
 
     async def get_service_folder(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         """Handles audio/cfg/getservicefolder/<service>/<user>/<path>/<offset>/<limit>."""
-        parts = command.strip("/").split("/")
-        service = parts[3].lower() if len(parts) > 3 else "loxoneradio"
-        user = parts[4] if len(parts) > 4 else "noUser"
-        folder_path = unquote(parts[5]) if len(parts) > 5 else "root"
-        offset = int(parts[6]) if len(parts) > 6 and parts[6].isdigit() else 0
-        limit = int(parts[7]) if len(parts) > 7 and parts[7].isdigit() else 50
+        cmd_clean = command.split("?")[0].strip("/")
+        parts = cmd_clean.split("/")
+        idx = 3 if len(parts) > 1 and parts[1] == "cfg" else 2
+        service = parts[idx].lower() if len(parts) > idx else "loxoneradio"
+        user = parts[idx + 1] if len(parts) > idx + 1 else "noUser"
+        limit = int(parts[-1]) if len(parts) > 1 and parts[-1].isdigit() else 50
+        offset = int(parts[-2]) if len(parts) > 2 and parts[-2].isdigit() else 0
+        raw_path_parts = (
+            parts[idx + 2 : -2]
+            if len(parts) > idx + 4
+            else (parts[idx + 2 : -1] if len(parts) > idx + 3 else ["root"])
+        )
+        raw_path = "/".join(raw_path_parts) if raw_path_parts else "root"
+        folder_path = unquote(raw_path).strip("/")
 
         items: List[Dict[str, Any]] = []
         folder_name = "Radio"
+        is_pre_paged = False
 
-        is_radio_service = service in (
-            "local",
-            "custom",
-            "music",
-            "world",
-            "loxoneradio",
-            "radio",
-            "tunein",
-        )
+        fp_norm = folder_path.replace(":///", "://")
+        album_id: Optional[str] = None
+        playlist_id: Optional[str] = None
+        artist_id: Optional[str] = None
 
-        if is_radio_service:
+        if fp_norm.startswith("library://album/"):
+            album_id = fp_norm[len("library://album/"):].split("/")[0]
+        elif fp_norm.startswith("album:"):
+            album_id = fp_norm[len("album:"):].split("/")[0]
+        elif fp_norm.startswith("album/"):
+            album_id = fp_norm[len("album/"):].split("/")[0]
+        elif fp_norm.startswith("library://playlist/"):
+            playlist_id = fp_norm[len("library://playlist/"):].split("/")[0]
+        elif fp_norm.startswith("playlist:"):
+            playlist_id = fp_norm[len("playlist:"):].split("/")[0]
+        elif fp_norm.startswith("playlist/"):
+            playlist_id = fp_norm[len("playlist/"):].split("/")[0]
+        elif fp_norm.startswith("library://artist/"):
+            artist_id = fp_norm[len("library://artist/"):].split("/")[0]
+        elif fp_norm.startswith("artist:"):
+            artist_id = fp_norm[len("artist:"):].split("/")[0]
+        elif fp_norm.startswith("artist/"):
+            artist_id = fp_norm[len("artist/"):].split("/")[0]
+        elif fp_norm.isdigit() and int(fp_norm) > 6:
+            playlist_id = fp_norm
+
+        if album_id and self._get_album_tracks:
+            raw_tracks = await self._get_album_tracks(album_id)
+            folder_name = raw_tracks[0].get("album") if raw_tracks and raw_tracks[0].get("album") else f"Album {album_id}"
+            items.extend(raw_tracks)
+        elif playlist_id and self._get_playlist_tracks:
+            raw_tracks = await self._get_playlist_tracks(playlist_id)
+            folder_name = f"Playlist {playlist_id}"
+            items.extend(raw_tracks)
+        elif artist_id and self._get_artist_tracks:
+            raw_tracks = await self._get_artist_tracks(artist_id)
+            folder_name = raw_tracks[0].get("artist") if raw_tracks and raw_tracks[0].get("artist") else f"Künstler {artist_id}"
+            items.extend(raw_tracks)
+        elif service in ("local", "custom", "music", "world", "loxoneradio", "radio", "tunein"):
             if folder_path == "local" or service == "local":
                 folder_name = "Lokale Sender"
             elif folder_path == "custom" or service == "custom":
@@ -304,11 +384,11 @@ class FavoriteHandlers:
                     "station": r.get("station") or r.get("name", "Radio"),
                     "audiopath": r.get("audiopath", f"radio:{r.get('id', '')}"),
                     "coverurl": r.get("cover", ""),
-                    "type": 2,  # FileType.File
+                    "type": 2,
                 })
         else:
             # Streaming Service: Spotify / Music Assistant
-            if folder_path in ("root", "start"):
+            if folder_path in ("root", "start", ""):
                 folder_name = "Music Assistant"
                 # Loxone expects 7 entries (0..6) matching MediaEnum.Spotify.TYPES
                 items = [
@@ -370,6 +450,7 @@ class FavoriteHandlers:
             elif folder_path in ("3", "playlists", "0", "1"):
                 folder_name = "Playlists"
                 playlists = await self._get_playlists(limit, offset)
+                is_pre_paged = True
                 for p in playlists:
                     items.append({
                         "id": str(p.get("id") or p.get("item_id", len(items) + 1)),
@@ -383,6 +464,7 @@ class FavoriteHandlers:
             elif folder_path in ("5", "albums") and self._get_albums:
                 folder_name = "Alben"
                 albums = await self._get_albums(limit, offset)
+                is_pre_paged = True
                 for a in albums:
                     items.append({
                         "id": str(a.get("id") or a.get("item_id", len(items) + 1)),
@@ -396,6 +478,7 @@ class FavoriteHandlers:
             elif folder_path in ("6", "artists") and self._get_artists:
                 folder_name = "Künstler"
                 artists = await self._get_artists(limit, offset)
+                is_pre_paged = True
                 for ar in artists:
                     items.append({
                         "id": str(ar.get("id") or ar.get("item_id", len(items) + 1)),
@@ -419,24 +502,31 @@ class FavoriteHandlers:
                         "coverurl": r.get("cover", ""),
                         "type": 2,
                     })
-            elif folder_path in ("4", "favorites"):
+            elif folder_path in ("4", "favorites", "Lieblingssongs"):
                 folder_name = "Lieblingssongs"
                 if self._get_playlist_tracks:
                     raw_tracks = await self._get_playlist_tracks("favorites")
                     for t in raw_tracks:
                         items.append(t)
-            elif self._get_playlist_tracks and folder_path.isdigit():
-                folder_name = f"Playlist {folder_path}"
-                raw_tracks = await self._get_playlist_tracks(folder_path)
-                for t in raw_tracks:
-                    items.append(t)
 
-        paged_items = items[offset : offset + limit] if (offset > 0 or limit < len(items)) else items
+        for it in items:
+            if it.get("thumbnail") is None:
+                it["thumbnail"] = it.get("coverurl") or it.get("cover") or ""
+            if it.get("coverurl") is None:
+                it["coverurl"] = it.get("thumbnail") or it.get("cover") or ""
+
+        if is_pre_paged:
+            paged_items = items
+            total_count = offset + len(items) + (1 if len(items) == limit else 0)
+        else:
+            paged_items = items[offset : offset + limit] if (offset > 0 or limit < len(items)) else items
+            total_count = len(items)
+
         folder_payload = {
             "id": folder_path,
             "name": folder_name,
             "start": offset,
-            "totalitems": len(items),
+            "totalitems": total_count,
             "service": service,
             "items": paged_items,
         }
@@ -458,22 +548,11 @@ class FavoriteHandlers:
 
     async def service_play(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         """Plays media from a streaming service or library path."""
-        parts = command.strip("/").split("/")
-        idx = 2 if len(parts) > 1 and parts[1] == "cfg" else 1
-        zone_id = int(parts[idx]) if len(parts) > idx and parts[idx].isdigit() else 1
-        subparts = parts[idx + 2 :]
-        if not subparts:
+        zone_id, decoded_path, shuffle = extract_service_play_media(command)
+        if not decoded_path:
             return build_response(command, "serviceplay", "ok")
 
-        if len(subparts) >= 3 and subparts[1].lower() in ("nouser", "music assistant", "mass_library", "local", "custom", "music", "world"):
-            media_path = "/".join(subparts[2:])
-        elif len(subparts) >= 3 and subparts[0].lower() in ("spotify", "loxoneradio", "local", "radio", "tunein", "custom", "music", "world"):
-            media_path = "/".join(subparts[2:])
-        else:
-            media_path = "/".join(subparts)
-
-        decoded_path = unquote(media_path)
-        logger.info("service_play for zone %d: %s", zone_id, decoded_path)
+        logger.info("service_play for zone %d: %s (shuffle=%s)", zone_id, decoded_path, shuffle)
         await self.play_media(zone_id, decoded_path)
         return build_response(command, "serviceplay", "ok")
 

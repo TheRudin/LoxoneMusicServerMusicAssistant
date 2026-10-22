@@ -5,7 +5,7 @@ import unittest
 from loxone_musicserver.config import ServerConfig
 from loxone_musicserver.loxone.crypto import LoxoneCrypto
 from loxone_musicserver.loxone.handlers.config_handlers import ConfigHandlers
-from loxone_musicserver.loxone.handlers.favorite_handlers import FavoriteHandlers
+from loxone_musicserver.loxone.handlers.favorite_handlers import FavoriteHandlers, extract_service_play_media
 from loxone_musicserver.loxone.handlers.secure_handlers import SecureHandlers
 from loxone_musicserver.loxone.handlers.zone_handlers import ZoneHandlers
 from loxone_musicserver.loxone.responses import serialize_result
@@ -225,6 +225,57 @@ class TestHandlers(unittest.TestCase):
                 {"id": "200", "name": "Queen", "cover": "http://img/queen.png", "audiopath": "library://artist/200"}
             ]
 
+        async def get_album_tracks(album_id):
+            return [
+                {
+                    "id": f"{album_id}_1",
+                    "name": "Come Together",
+                    "title": "Come Together",
+                    "artist": "The Beatles",
+                    "album": "Abbey Road",
+                    "duration": 259,
+                    "audiopath": f"library://track/{album_id}_1",
+                    "coverurl": "http://img/abbey.png",
+                    "thumbnail": "http://img/abbey.png",
+                    "tag": "track",
+                    "type": 2,
+                }
+            ]
+
+        async def get_playlist_tracks(playlist_id):
+            return [
+                {
+                    "id": f"{playlist_id}_1",
+                    "name": "Bohemian Rhapsody",
+                    "title": "Bohemian Rhapsody",
+                    "artist": "Queen",
+                    "album": "A Night at the Opera",
+                    "duration": 354,
+                    "audiopath": f"library://track/{playlist_id}_1",
+                    "coverurl": "http://img/queen.png",
+                    "thumbnail": "http://img/queen.png",
+                    "tag": "track",
+                    "type": 2,
+                }
+            ]
+
+        async def get_artist_tracks(artist_id):
+            return [
+                {
+                    "id": f"{artist_id}_1",
+                    "name": "Don't Stop Me Now",
+                    "title": "Don't Stop Me Now",
+                    "artist": "Queen",
+                    "album": "Jazz",
+                    "duration": 210,
+                    "audiopath": f"library://track/{artist_id}_1",
+                    "coverurl": "http://img/queen.png",
+                    "thumbnail": "http://img/queen.png",
+                    "tag": "track",
+                    "type": 2,
+                }
+            ]
+
         async def play_media(zid, media):
             played_items.append((zid, media))
 
@@ -237,6 +288,9 @@ class TestHandlers(unittest.TestCase):
             play_media,
             get_albums=get_albums,
             get_artists=get_artists,
+            get_playlist_tracks=get_playlist_tracks,
+            get_album_tracks=get_album_tracks,
+            get_artist_tracks=get_artist_tracks,
         )
 
         async def run():
@@ -324,7 +378,23 @@ class TestHandlers(unittest.TestCase):
             self.assertEqual(res_artists.payload[0]["items"][0]["audiopath"], "library://artist/200")
             self.assertEqual(res_artists.payload[0]["items"][0]["tag"], "artist")
 
-            # 8. Verify radio fallback when get_radios returns empty list
+            # 8. Verify get_service_folder for album, playlist, and artist details
+            res_album_detail = await favs.get_service_folder("audio/cfg/getservicefolder/spotify/mass_library/library://album/100/0/50")
+            self.assertEqual(res_album_detail.payload[0]["name"], "Abbey Road")
+            self.assertEqual(len(res_album_detail.payload[0]["items"]), 1)
+            t_album = res_album_detail.payload[0]["items"][0]
+            self.assertEqual(t_album["title"], "Come Together")
+            self.assertEqual(t_album["tag"], "track")
+            self.assertEqual(t_album["type"], 2)
+            self.assertEqual(t_album["audiopath"], "library://track/100_1")
+
+            res_playlist_detail = await favs.get_service_folder("audio/cfg/getservicefolder/spotify/mass_library/library://playlist/10/0/50")
+            self.assertEqual(res_playlist_detail.payload[0]["items"][0]["title"], "Bohemian Rhapsody")
+
+            res_artist_detail = await favs.get_service_folder("audio/cfg/getservicefolder/spotify/mass_library/library://artist/200/0/50")
+            self.assertEqual(res_artist_detail.payload[0]["items"][0]["title"], "Don't Stop Me Now")
+
+            # 9. Verify radio fallback when get_radios returns empty list
             async def get_empty_radios():
                 return []
 
@@ -342,7 +412,7 @@ class TestHandlers(unittest.TestCase):
             self.assertEqual(fallback_items[0]["name"], "Radio SRF 3")
             self.assertEqual(fallback_items[0]["type"], 2)
 
-            # 9. Verify serviceplay handles loxoneradio and spotify URLs and returns ok
+            # 10. Verify serviceplay handles complex Loxone URLs (with query parameters and /noshuffle)
             res_sp1 = await favs.service_play("audio/1/serviceplay/loxoneradio/noUser/library%3A%2F%2Fradio%2F1")
             self.assertEqual(played_items[-1], (1, "library://radio/1"))
             self.assertEqual(res_sp1.payload, "ok")
@@ -351,7 +421,35 @@ class TestHandlers(unittest.TestCase):
             self.assertEqual(played_items[-1], (2, "library://playlist/10"))
             self.assertEqual(res_sp2.payload, "ok")
 
-            # 10. Global search endpoints
+            res_sp_radio = await favs.service_play("audio/1/serviceplay/radio/nouser/http://stream.srg-ssr.ch/m/srf1/mp3_128/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
+            self.assertEqual(played_items[-1], (1, "http://stream.srg-ssr.ch/m/srf1/mp3_128"))
+            self.assertEqual(res_sp_radio.payload, "ok")
+
+            res_sp_album = await favs.service_play("audio/2/serviceplay/spotify/mass_library/library://album/26/noshuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
+            self.assertEqual(played_items[-1], (2, "library://album/26"))
+            self.assertEqual(res_sp_album.payload, "ok")
+
+            res_sp_pl = await favs.service_play("audio/1/serviceplay/spotify/mass_library/library://playlist/5/shuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
+            self.assertEqual(played_items[-1], (1, "library://playlist/5"))
+            self.assertEqual(res_sp_pl.payload, "ok")
+
+            # 11. Test extract_service_play_media helper directly
+            zid, med, shuf = extract_service_play_media("audio/2/serviceplay/radio/nouser/http://stream.srg-ssr.ch/m/srf3/mp3_128/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
+            self.assertEqual(zid, 2)
+            self.assertEqual(med, "http://stream.srg-ssr.ch/m/srf3/mp3_128")
+            self.assertIsNone(shuf)
+
+            zid, med, shuf = extract_service_play_media("audio/1/serviceplay/spotify/mass_library/library://album/26/noshuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
+            self.assertEqual(zid, 1)
+            self.assertEqual(med, "library://album/26")
+            self.assertFalse(shuf)
+
+            zid, med, shuf = extract_service_play_media("audio/1/serviceplay/spotify/mass_library/library://playlist/5/shuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
+            self.assertEqual(zid, 1)
+            self.assertEqual(med, "library://playlist/5")
+            self.assertTrue(shuf)
+
+            # 12. Global search endpoints
             gs_desc = await favs.global_search_describe("audio/cfg/globalsearch/describe")
             self.assertEqual(gs_desc.name, "globalsearch")
             self.assertIn("spotify", gs_desc.payload)

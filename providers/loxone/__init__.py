@@ -13,7 +13,7 @@ from .crypto import LoxoneCrypto
 from .discovery import LoxoneDiscoveryService
 from .handlers.alert_handlers import AlertHandlers
 from .handlers.config_handlers import ConfigHandlers
-from .handlers.favorite_handlers import FavoriteHandlers
+from .handlers.favorite_handlers import DEFAULT_RADIO_STATIONS, FavoriteHandlers
 from .handlers.queue_handlers import QueueHandlers
 from .handlers.secure_handlers import SecureHandlers
 from .handlers.zone_handlers import ZoneHandlers
@@ -308,6 +308,28 @@ class LoxonePlugin(PluginProvider):
                 mode_str = str(getattr(data, 'playback_state', '')).lower()
                 state.mode = 'play' if 'play' in mode_str else ('pause' if 'pause' in mode_str else 'stop')
                 self.notifier.notify_zone_state_changed(state)
+        elif str(event_type) in ('queue_updated', 'queue_time_updated', 'EventType.QUEUE_UPDATED', 'EventType.QUEUE_TIME_UPDATED') and obj_id in self.player_to_zone:
+            zid = self.player_to_zone[obj_id]
+            state = self.zone_states.get(zid)
+            if state and data:
+                cur = getattr(data, 'current_item', None)
+                if cur:
+                    state.title = getattr(cur, 'name', '') or state.title
+                    state.duration = int(getattr(cur, 'duration', 0) or 0)
+                    media_item = getattr(cur, 'media_item', None)
+                    if media_item:
+                        art = getattr(media_item, 'artists', None)
+                        if art:
+                            state.artist = getattr(art[0], 'name', '')
+                        elif hasattr(media_item, 'artist'):
+                            state.artist = getattr(media_item.artist, 'name', '') or str(media_item.artist)
+                        if hasattr(media_item, 'album'):
+                            state.album = getattr(media_item.album, 'name', '') or str(media_item.album)
+                        if img := getattr(media_item, 'image', None):
+                            state.coverurl = getattr(img, 'path', '') or str(img)
+                if hasattr(data, 'elapsed_time') and data.elapsed_time is not None:
+                    state.time = int(data.elapsed_time)
+                self.notifier.notify_zone_state_changed(state)
         elif str(event_type) in ('player_added', 'player_removed', 'EventType.PLAYER_ADDED', 'EventType.PLAYER_REMOVED'):
             self._sync_zones_from_mass()
 
@@ -510,6 +532,7 @@ class LoxonePlugin(PluginProvider):
             pid = self.zone_to_player.get(zid)
             if not pid or not hasattr(self.mass, 'player_queues'):
                 return
+            target_media = media
             if target_media.startswith("folder:"):
                 return
             if target_media.startswith("radio:"):
@@ -520,44 +543,137 @@ class LoxonePlugin(PluginProvider):
                 target_media = f"library://album/{target_media.split(':', 1)[1]}"
             elif target_media.startswith("artist:"):
                 target_media = f"library://artist/{target_media.split(':', 1)[1]}"
+            for station in DEFAULT_RADIO_STATIONS:
+                if target_media == station["id"] or target_media == f"radio:{station['id']}":
+                    target_media = station["audiopath"]
+                    break
             try:
+                if hasattr(self.mass, "players"):
+                    await self.mass.players.cmd_power(pid, True)
                 await self.mass.player_queues.play_media(pid, target_media)
+                if zid in self.zone_states:
+                    self.zone_states[zid].power = "on"
+                    self.zone_states[zid].mode = "play"
+                    self.zone_states[zid].audiopath = target_media
+                    if self.notifier:
+                        self.notifier.notify_zone_state_changed(self.zone_states[zid])
             except Exception as exc:
                 LOGGER.error("Failed to play media %s on zone %d: %s", target_media, zid, exc)
 
-        async def get_playlist_tracks(playlist_id: str) -> List[Dict[str, Any]]:
+        def _format_track_item(t: Any, fallback_id: Any = "1") -> Dict[str, Any]:
+            tid = str(getattr(t, "item_id", None) or fallback_id)
+            name = getattr(t, "name", None) or getattr(t, "title", "Track")
+            artist_name = ""
+            if hasattr(t, "artists") and t.artists:
+                artist_name = getattr(t.artists[0], "name", "")
+            elif hasattr(t, "artist"):
+                artist_name = getattr(t.artist, "name", "") or str(t.artist or "")
+
+            album_name = ""
+            if hasattr(t, "album") and t.album:
+                album_name = getattr(t.album, "name", "") or str(t.album or "")
+
+            img_path = ""
+            if img := getattr(t, "image", None):
+                img_path = getattr(img, "path", "") or str(img)
+            elif hasattr(t, "metadata") and getattr(t.metadata, "images", None):
+                img_path = t.metadata.images[0].path if t.metadata.images else ""
+            elif hasattr(t, "album") and t.album:
+                if alb_img := getattr(t.album, "image", None):
+                    img_path = getattr(alb_img, "path", "") or str(alb_img)
+
+            uri = getattr(t, "uri", None) or f"library://track/{tid}"
+
+            return {
+                "id": tid,
+                "name": name,
+                "title": name,
+                "artist": artist_name,
+                "album": album_name,
+                "duration": int(getattr(t, "duration", 0) or 0),
+                "audiopath": uri,
+                "coverurl": img_path,
+                "thumbnail": img_path,
+                "tag": "track",
+                "type": 2,
+            }
+
+        async def get_album_tracks(album_id: str) -> List[Dict[str, Any]]:
             tracks: List[Dict[str, Any]] = []
-            if hasattr(self.mass, 'music') and hasattr(self.mass.music, 'playlists'):
+            if hasattr(self.mass, "music") and hasattr(self.mass.music, "albums"):
                 try:
                     items = []
-                    if hasattr(self.mass.music.playlists, 'tracks'):
-                        res = self.mass.music.playlists.tracks(playlist_id, 'library')
+                    if hasattr(self.mass.music.albums, "get_library_album_tracks"):
+                        res = self.mass.music.albums.get_library_album_tracks(album_id)
                         if asyncio.iscoroutine(res):
                             items = await res
-                        elif hasattr(res, '__aiter__'):
+                        elif isinstance(res, (list, tuple)):
+                            items = list(res)
+                    if not items and hasattr(self.mass.music.albums, "tracks"):
+                        res = self.mass.music.albums.tracks(album_id, "library")
+                        if asyncio.iscoroutine(res):
+                            items = await res
+                        elif hasattr(res, "__aiter__"):
                             items = [it async for it in res]
                         elif isinstance(res, (list, tuple)):
                             items = list(res)
                     for t in items:
-                        tid = str(getattr(t, 'item_id', len(tracks) + 1))
-                        artist_name = getattr(getattr(t, 'artist', None), 'name', '') or str(getattr(t, 'artist', '') or '')
-                        album_name = getattr(getattr(t, 'album', None), 'name', '') or str(getattr(t, 'album', '') or '')
-                        img_path = getattr(getattr(t, 'image', None), 'path', '') or ''
-                        tracks.append({
-                            'id': tid,
-                            'name': getattr(t, 'name', 'Track'),
-                            'title': getattr(t, 'name', 'Track'),
-                            'artist': artist_name,
-                            'album': album_name,
-                            'duration': int(getattr(t, 'duration', 0) or 0),
-                            'audiopath': getattr(t, 'uri', None) or f"library://track/{tid}",
-                            'coverurl': img_path,
-                            'thumbnail': img_path,
-                            'tag': 'track',
-                            'type': 2,
-                        })
+                        tracks.append(_format_track_item(t, len(tracks) + 1))
                 except Exception as exc:
-                    LOGGER.debug('Error getting playlist tracks: %s', exc)
+                    LOGGER.debug("Error getting album tracks for %s: %s", album_id, exc)
+            return tracks
+
+        async def get_artist_tracks(artist_id: str) -> List[Dict[str, Any]]:
+            tracks: List[Dict[str, Any]] = []
+            if hasattr(self.mass, "music") and hasattr(self.mass.music, "artists"):
+                try:
+                    items = []
+                    if hasattr(self.mass.music.artists, "get_library_artist_toptracks"):
+                        res = self.mass.music.artists.get_library_artist_toptracks(artist_id)
+                        if asyncio.iscoroutine(res):
+                            items = await res
+                        elif isinstance(res, (list, tuple)):
+                            items = list(res)
+                    if not items and hasattr(self.mass.music.artists, "tracks"):
+                        res = self.mass.music.artists.tracks(artist_id, "library")
+                        if asyncio.iscoroutine(res):
+                            items = await res
+                        elif hasattr(res, "__aiter__"):
+                            items = [it async for it in res]
+                        elif isinstance(res, (list, tuple)):
+                            items = list(res)
+                    for t in items:
+                        tracks.append(_format_track_item(t, len(tracks) + 1))
+                except Exception as exc:
+                    LOGGER.debug("Error getting artist tracks for %s: %s", artist_id, exc)
+            return tracks
+
+        async def get_playlist_tracks(playlist_id: str) -> List[Dict[str, Any]]:
+            tracks: List[Dict[str, Any]] = []
+            if playlist_id in ("favorites", "favorite", "4"):
+                if hasattr(self.mass, "music") and hasattr(self.mass.music, "tracks"):
+                    try:
+                        items = await self.mass.music.tracks.library_items(favorite=True, limit=50)
+                        for t in items:
+                            tracks.append(_format_track_item(t, len(tracks) + 1))
+                        return tracks
+                    except Exception as exc:
+                        LOGGER.debug("Error getting favorite tracks: %s", exc)
+            if hasattr(self.mass, "music") and hasattr(self.mass.music, "playlists"):
+                try:
+                    items = []
+                    if hasattr(self.mass.music.playlists, "tracks"):
+                        res = self.mass.music.playlists.tracks(playlist_id, "library")
+                        if asyncio.iscoroutine(res):
+                            items = await res
+                        elif hasattr(res, "__aiter__"):
+                            items = [it async for it in res]
+                        elif isinstance(res, (list, tuple)):
+                            items = list(res)
+                    for t in items:
+                        tracks.append(_format_track_item(t, len(tracks) + 1))
+                except Exception as exc:
+                    LOGGER.debug("Error getting playlist tracks for %s: %s", playlist_id, exc)
             return tracks
 
         favs = FavoriteHandlers(
@@ -570,6 +686,8 @@ class LoxonePlugin(PluginProvider):
             get_albums=get_albums,
             get_artists=get_artists,
             get_playlist_tracks=get_playlist_tracks,
+            get_album_tracks=get_album_tracks,
+            get_artist_tracks=get_artist_tracks,
         )
 
         # Alerts & TTS
