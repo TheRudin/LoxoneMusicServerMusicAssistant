@@ -6,7 +6,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from .client import MusicAssistantClient
-from ..codec import encode_loxone_id, BASE_FAVORITE_ZONE
+from ..loxone.codec import encode_loxone_id, BASE_FAVORITE_ZONE
 from ..config import ServerConfig
 from ..loxone.websocket import LoxoneWebSocketNotifier, LoxoneZoneState
 
