@@ -19,14 +19,17 @@ class LoxoneUdpDiscoveryProtocol(asyncio.DatagramProtocol):
     def __init__(self, config: ServerConfig) -> None:
         self.config = config
         self.transport: Optional[asyncio.DatagramTransport] = None
-        self.response_payload = json.dumps(
+
+    @property
+    def response_payload(self) -> bytes:
+        return json.dumps(
             {
                 "t": "Audioserver",
                 "tv": "3",
-                "n": config.server_name,
-                "s": config.formatted_mac,
-                "v": config.firmware_version_number,
-                "p": str(config.app_port),
+                "n": self.config.server_name,
+                "s": self.config.formatted_mac,
+                "v": self.config.firmware_version_number,
+                "p": str(self.config.app_port),
                 "hn": "audioserver",
                 "di": "1",
             }

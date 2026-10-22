@@ -88,17 +88,41 @@ class LoxoneMusicServerPlugin(PluginProvider):
     def _sync_zones_from_mass(self) -> None:
         """Maps Music Assistant players directly to Loxone zones."""
         zone_id = 1
-        players = self.mass.players.all if hasattr(self.mass, "players") else []
+        players = []
+        if hasattr(self.mass, "players"):
+            if hasattr(self.mass.players, "_players") and isinstance(self.mass.players._players, dict):
+                players = list(self.mass.players._players.values())
+            elif hasattr(self.mass.players, "all") and isinstance(self.mass.players.all, (list, tuple)):
+                players = list(self.mass.players.all)
+            else:
+                try:
+                    players = list(self.mass.players)
+                except Exception as exc:
+                    logger.warning("Error iterating mass.players: %s", exc)
+                    players = []
+
         for player in players:
-            pid = player.player_id
+            pid = getattr(player, "player_id", None)
+            if not pid:
+                continue
             self.zone_to_player[zone_id] = pid
             self.player_to_zone[pid] = zone_id
 
             name = getattr(player, "display_name", None) or getattr(player, "name", f"Zone {zone_id}")
+            vol = getattr(player, "volume_level", 30)
+            if vol is None:
+                vol = 30
+            powered = getattr(player, "powered", True)
+            playback_state = str(getattr(player, "playback_state", "idle")).lower()
+            mode = "play" if "play" in playback_state else "stop"
+            power = "on" if powered else "off"
+
             self.zone_states[zone_id] = LoxoneZoneState(
                 playerid=zone_id,
                 name=name,
-                volume=getattr(player, "volume_level", 30) or 30,
+                volume=int(vol),
+                power=power,
+                mode=mode,
             )
             zone_id += 1
 
@@ -114,8 +138,11 @@ class LoxoneMusicServerPlugin(PluginProvider):
             if state and data:
                 state.volume = getattr(data, "volume_level", state.volume) or state.volume
                 state.power = "on" if getattr(data, "powered", True) else "off"
-                state.mode = "play" if str(getattr(data, "playback_state", "")).lower() == "playing" else "stop"
+                mode_str = str(getattr(data, "playback_state", "")).lower()
+                state.mode = "play" if "play" in mode_str else ("pause" if "pause" in mode_str else "stop")
                 self.notifier.notify_zone_state_changed(state)
+        elif str(event_type) in ("player_added", "player_removed", "EventType.PLAYER_ADDED", "EventType.PLAYER_REMOVED"):
+            self._sync_zones_from_mass()
 
     def _register_routes(self) -> None:
         """Registers all Loxone command routes."""

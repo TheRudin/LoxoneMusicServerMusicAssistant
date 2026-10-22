@@ -41,17 +41,26 @@ Auf Ihrem Unraid-Server läuft Music Assistant bereits als Docker-Container.
 Öffnen Sie das **Unraid Web-Terminal** (oben rechts in Unraid auf das Terminal-Icon `>_` klicken) und führen Sie folgenden Befehl aus:
 
 ```bash
-# 1. Ordner in den Music Assistant Container kopieren:
-docker cp /mnt/user/appdata/music-assistant/providers/loxone music-assistant:/app/venv/lib/python3.12/site-packages/music_assistant/providers/loxone
+# 1. Neueste Version direkt in den Music Assistant Container kopieren:
+docker exec -it music-assistant /bin/sh -c "TARGET=\$(python3 -c 'import sys; print(f\"/app/venv/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages/music_assistant/providers/loxone\")') && rm -rf /tmp/repo && git clone https://github.com/TheRudin/LoxoneMusicServerMusicAssistant.git /tmp/repo && mkdir -p \$TARGET && cp -r /tmp/repo/providers/loxone/* \$TARGET/ && rm -rf /tmp/repo && echo 'Loxone Plugin erfolgreich aktualisiert!'"
 
 # 2. Container neu starten:
 docker restart music-assistant
 ```
 
+> [!IMPORTANT]
+> **Netzwerkmodus in Unraid (WICHTIG für Loxone Erkennung):**
+> Der Music Assistant Docker-Container muss in Unraid auf **Network Type: Host** stehen:
+> - Öffnen Sie in Unraid den Reiter **Docker**.
+> - Klicken Sie auf **music-assistant** -> **Edit**.
+> - Stellen Sie sicher, dass **Network Type:** auf **Host** eingestellt ist (nicht `Bridge`).
+> - Klicken Sie unten auf **Apply**.
+> *(Im Bridge-Modus blockiert Docker die UDP-Discovery-Broadcasts von Loxone auf Port 7070).*
+
 > [!TIP]
 > **Dauerhafte Einbindung bei Container-Updates:**
-> Legen Sie den Ordner `providers/loxone` auf Unraid unter `/mnt/user/appdata/music-assistant/custom_providers/loxone` ab und tragen Sie in der Unraid Docker-Vorlage für Music Assistant einen zusätzlichen Pfad ein:
-> - **Container-Pfad:** `/app/venv/lib/python3.12/site-packages/music_assistant/providers/loxone`
+> Sie können den Ordner `providers/loxone` auf Unraid unter `/mnt/user/appdata/music-assistant/custom_providers/loxone` ablegen und in der Unraid Docker-Vorlage für Music Assistant als Pfad einbinden:
+> - **Container-Pfad:** `/app/venv/lib/python3.14/site-packages/music_assistant/providers/loxone`
 > - **Host-Pfad:** `/mnt/user/appdata/music-assistant/custom_providers/loxone`
 
 ---
@@ -61,25 +70,30 @@ docker restart music-assistant
 1. Öffnen Sie die Music Assistant Weboberfläche im Browser: `http://192.168.1.10:8095`
 2. Klicken Sie links unten auf **Einstellungen (Settings)** ⚙️.
 3. Wählen Sie den Reiter **Plugins**.
-4. Klicken Sie auf **Plugin hinzufügen (+)**.
-5. Wählen Sie **Loxone Music Server** aus.
-6. Übernehmen Sie die Standardeinstellungen (Servername: `MusicAssistant-AudioServer`, Ports: `7070`, `7091`, `7095`) und klicken Sie auf **Speichern**.
-7. **Fertig!** Music Assistant lauscht nun sofort auf den offiziellen Loxone-Ports.
+4. Falls **Loxone Music Server** bereits vorhanden ist: Klicken Sie auf die drei Punkte `⋮` -> **Neu laden (Reload)**. Falls noch nicht hinzugefügt: Klicken Sie auf **Plugin hinzufügen (+)** und wählen Sie **Loxone Music Server**.
+5. Übernehmen Sie die Einstellungen (Servername: `MusicAssistant-AudioServer`, Ports: `7070`, `7091`, `7095`) und klicken Sie auf **Speichern**.
+6. **Fertig!** Music Assistant lauscht nun sofort auf den Loxone-Ports (UDP 7070, TCP 7091, TCP 7095).
 
 ---
 
 ### Schritt 3: In Loxone Config einbinden
 
-1. Öffnen Sie **Loxone Config** und laden Sie Ihr Projekt.
-2. Klicken Sie im Baum auf **Audio** oder oben auf **Geräte suchen**.
-3. Wählen Sie **Audio Server suchen**.
-4. Der Server wird sofort automatisch erkannt:
+1. Öffnen Sie **Loxone Config** und verbinden Sie sich mit Ihrem Miniserver.
+2. Klicken Sie oben im Menüband auf **Geräte suchen** (oder im Peripherie-Baum Rechtsklick auf **Audio** -> **Audio Server suchen**).
+3. Der Server wird automatisch im Netzwerk gefunden:
    - **Typ:** `Audioserver`
    - **Name:** `MusicAssistant-AudioServer`
    - **IP-Adresse:** `192.168.1.10` (Port `7091`)
-5. Klicken Sie auf **Gerät anlegen**.
-6. Ihre Music Assistant Player (*Badezimmer*, *Wohnzimmer* etc.) werden als Audio-Zonen angelegt.
-7. Verknüpfen Sie die Zonen mit den Räumen und speichern Sie das Projekt in den Miniserver (**In Miniserver speichern**).
+4. Klicken Sie auf **Gerät anlegen**.
+5. Ihre Music Assistant Lautsprecher (*Badezimmer*, *Wohnzimmer*, *MacBook* etc.) werden sofort als Audio-Zonen angelegt!
+6. Klicken Sie auf **In Miniserver speichern**.
+
+> [!TIP]
+> **Manuell hinzufügen (falls UDP-Broadcast in Ihrem WLAN blockiert ist):**
+> Sollte Ihr PC in einem separaten WLAN/Subnetz sein und Broadcasts blockiert werden:
+> 1. In Loxone Config im Peripheriebaum auf **Audio** rechtsklicken -> **Neues Gerät** -> **Audioserver**.
+> 2. Bei **Adresse / Host:** `192.168.1.10:7091` eintragen.
+> 3. Bei **MAC-Adresse:** Die in Music Assistant angezeigte MAC (z. B. `C9:63:F8:51:F6:AD`) eintragen.
 
 ---
 

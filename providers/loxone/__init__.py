@@ -155,19 +155,29 @@ class LoxonePlugin(PluginProvider):
         LOGGER.info('Starting Loxone AudioServer provider in Music Assistant...')
 
         # Load user configuration overrides if available
-        if hasattr(self, 'get_config_value'):
-            if sname := self.get_config_value(CONF_SERVER_NAME):
-                self.server_config.server_name = str(sname)
-            if lip := self.get_config_value(CONF_LISTEN_IP):
-                self.server_config.host = str(lip)
-            if aport := self.get_config_value(CONF_APP_PORT):
-                self.server_config.app_port = int(aport)
-            if mport := self.get_config_value(CONF_MS_PORT):
-                self.server_config.ms_port = int(mport)
-            if uport := self.get_config_value(CONF_UDP_PORT):
-                self.server_config.discovery_port = int(uport)
-            if mac := self.get_config_value(CONF_MAC_ADDRESS):
-                self.server_config.mac_address = str(mac)
+        def _get_val(key: str) -> Any:
+            if hasattr(self, 'get_config_value'):
+                val = self.get_config_value(key)
+                if val is not None:
+                    return val
+            if hasattr(self, 'config') and hasattr(self.config, 'get_value'):
+                val = self.config.get_value(key)
+                if val is not None:
+                    return val
+            return None
+
+        if sname := _get_val(CONF_SERVER_NAME):
+            self.server_config.server_name = str(sname)
+        if lip := _get_val(CONF_LISTEN_IP):
+            self.server_config.host = str(lip)
+        if aport := _get_val(CONF_APP_PORT):
+            self.server_config.app_port = int(aport)
+        if mport := _get_val(CONF_MS_PORT):
+            self.server_config.ms_port = int(mport)
+        if uport := _get_val(CONF_UDP_PORT):
+            self.server_config.discovery_port = int(uport)
+        if mac := _get_val(CONF_MAC_ADDRESS):
+            self.server_config.mac_address = str(mac)
 
         self._register_routes()
         self._sync_zones_from_mass()
@@ -177,8 +187,16 @@ class LoxonePlugin(PluginProvider):
             self._unsub = self.mass.subscribe(self._on_mass_event)
 
         # Start servers and discovery
-        await self.discovery.start()
-        await self.server.start()
+        try:
+            await self.discovery.start()
+        except Exception as exc:
+            LOGGER.error("Failed to start Loxone discovery service: %s", exc)
+
+        try:
+            await self.server.start()
+        except Exception as exc:
+            LOGGER.error("Failed to start Loxone server: %s", exc)
+
         LOGGER.info(
             'Loxone AudioServer emulator running inside Music Assistant on %s (Ports: UDP %d, TCP %d, TCP %d)!',
             self.server_config.host,
@@ -200,17 +218,41 @@ class LoxonePlugin(PluginProvider):
     def _sync_zones_from_mass(self) -> None:
         """Maps Music Assistant players directly to Loxone zones."""
         zone_id = 1
-        players = self.mass.players.all if hasattr(self.mass, 'players') else []
+        players = []
+        if hasattr(self.mass, 'players'):
+            if hasattr(self.mass.players, '_players') and isinstance(self.mass.players._players, dict):
+                players = list(self.mass.players._players.values())
+            elif hasattr(self.mass.players, 'all') and isinstance(self.mass.players.all, (list, tuple)):
+                players = list(self.mass.players.all)
+            else:
+                try:
+                    players = list(self.mass.players)
+                except Exception as exc:
+                    LOGGER.warning('Error iterating mass.players: %s', exc)
+                    players = []
+
         for player in players:
-            pid = player.player_id
+            pid = getattr(player, 'player_id', None)
+            if not pid:
+                continue
             self.zone_to_player[zone_id] = pid
             self.player_to_zone[pid] = zone_id
 
             name = getattr(player, 'display_name', None) or getattr(player, 'name', f'Zone {zone_id}')
+            vol = getattr(player, 'volume_level', 30)
+            if vol is None:
+                vol = 30
+            powered = getattr(player, 'powered', True)
+            playback_state = str(getattr(player, 'playback_state', 'idle')).lower()
+            mode = 'play' if 'play' in playback_state else 'stop'
+            power = 'on' if powered else 'off'
+
             self.zone_states[zone_id] = LoxoneZoneState(
                 playerid=zone_id,
                 name=name,
-                volume=getattr(player, 'volume_level', 30) or 30,
+                volume=int(vol),
+                power=power,
+                mode=mode,
             )
             zone_id += 1
         LOGGER.info('Mapped %d Music Assistant players to Loxone zones', len(self.zone_to_player))
@@ -228,8 +270,10 @@ class LoxonePlugin(PluginProvider):
                 state.volume = getattr(data, 'volume_level', state.volume) or state.volume
                 state.power = 'on' if getattr(data, 'powered', True) else 'off'
                 mode_str = str(getattr(data, 'playback_state', '')).lower()
-                state.mode = 'play' if mode_str in ('playing', 'playbackstate.playing') else 'stop'
+                state.mode = 'play' if 'play' in mode_str else ('pause' if 'pause' in mode_str else 'stop')
                 self.notifier.notify_zone_state_changed(state)
+        elif str(event_type) in ('player_added', 'player_removed', 'EventType.PLAYER_ADDED', 'EventType.PLAYER_REMOVED'):
+            self._sync_zones_from_mass()
 
     def _register_routes(self) -> None:
         """Registers all Loxone command routes."""
