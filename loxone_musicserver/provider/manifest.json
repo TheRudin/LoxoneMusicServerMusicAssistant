@@ -1,0 +1,16 @@
+{
+  "type": "plugin",
+  "domain": "loxone",
+  "stage": "stable",
+  "name": "Loxone Music Server",
+  "description": "Emulates a Loxone AudioServer / Music Server, enabling full native integration into Loxone Config, Miniserver and the Loxone App.",
+  "codeowners": ["@TheRudin"],
+  "credits": ["TheRudin", "sonn-audio"],
+  "documentation": "https://github.com/TheRudin/LoxoneMusicServerMusicAssistant",
+  "multi_instance": false,
+  "builtin": false,
+  "requirements": [
+    "cryptography>=41.0.0",
+    "zeroconf>=0.131.0"
+  ]
+}

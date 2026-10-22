@@ -1,0 +1,63 @@
+"""Configuration management for Loxone Music Server emulator."""
+
+from __future__ import annotations
+
+import os
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+def get_default_mac() -> str:
+    """Returns a stable MAC-like address."""
+    node = uuid.getnode()
+    mac = ":".join(f"{(node >> i) & 0xff:02X}" for i in range(40, -1, -8))
+    # Ensure locally administered unicast bit
+    return mac
+
+
+@dataclass
+class ServerConfig:
+    """Configuration settings."""
+
+    # Server identification
+    server_name: str = "MusicAssistant-AudioServer"
+    mac_address: str = field(default_factory=get_default_mac)
+    firmware_version_number: str = "17.1.05.05"
+    mdns_version: str = "16.00.09.16"
+    api_version: str = "~API:1.6~"
+    session_token: str = "8WahwAfULwEQce9Yu0qIE9L7QMkXFHbi0M9ch9vKcgYArPPojXHpSiNcq0fT3lqL"
+
+    # Network ports
+    host: str = "0.0.0.0"
+    app_port: int = 7091
+    ms_port: int = 7095
+    discovery_port: int = 7070
+
+    # Music Assistant connection
+    ma_url: str = "http://192.168.1.10:8095"
+    ma_username: str = "admin"
+    ma_password: str = "your_password"
+    ma_token: str = ""
+
+    # Storage
+    data_dir: Path = field(default_factory=lambda: Path(os.environ.get("LOXONE_DATA_DIR", "./data")))
+
+    @property
+    def firmware_version(self) -> str:
+        return f"LWSS V {self.firmware_version_number}"
+
+    @property
+    def formatted_mac(self) -> str:
+        raw = self.mac_address.replace(":", "").replace("-", "").upper()
+        if len(raw) == 12:
+            return ":".join(raw[i : i + 2] for i in range(0, 12, 2))
+        return self.mac_address
+
+    def get_identification(self, server_name: str) -> str:
+        """Returns the identification string sent upon WebSocket connect."""
+        if server_name == "msHttp":
+            base = f"MINISERVER V {self.firmware_version} {self.formatted_mac}"
+        else:
+            base = self.firmware_version
+        return f"{base} | {self.api_version} | Session-Token: {self.session_token}"
