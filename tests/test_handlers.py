@@ -5,6 +5,7 @@ import unittest
 from loxone_musicserver.config import ServerConfig
 from loxone_musicserver.loxone.crypto import LoxoneCrypto
 from loxone_musicserver.loxone.handlers.config_handlers import ConfigHandlers
+from loxone_musicserver.loxone.handlers.favorite_handlers import FavoriteHandlers
 from loxone_musicserver.loxone.handlers.secure_handlers import SecureHandlers
 from loxone_musicserver.loxone.handlers.zone_handlers import ZoneHandlers
 from loxone_musicserver.loxone.responses import serialize_result
@@ -189,6 +190,134 @@ class TestHandlers(unittest.TestCase):
 
             all_res = await self.cfg.get_all("audio/cfg/all")
             self.assertTrue(all_res.payload["success"])
+
+        asyncio.run(run())
+
+    def test_services_and_folders(self):
+        played_items = []
+
+        async def get_favs(zid, start, limit):
+            return {"totalitems": 0, "start": start, "items": []}
+
+        async def play_fav(zid, fid):
+            pass
+
+        async def cycle_fav(zid):
+            pass
+
+        async def get_radios():
+            return [
+                {"id": "1", "name": "SRF 3", "station": "SRF 3", "cover": "http://img/srf3.png", "audiopath": "library://radio/1"}
+            ]
+
+        async def get_playlists(limit=50, offset=0):
+            return [
+                {"id": "10", "name": "Best of Rock", "totalitems": 25, "cover": "http://img/rock.png", "audiopath": "library://playlist/10"}
+            ]
+
+        async def get_albums(limit=50, offset=0):
+            return [
+                {"id": "100", "name": "Abbey Road", "artist": "The Beatles", "cover": "http://img/abbey.png", "audiopath": "library://album/100"}
+            ]
+
+        async def get_artists(limit=50, offset=0):
+            return [
+                {"id": "200", "name": "Queen", "cover": "http://img/queen.png", "audiopath": "library://artist/200"}
+            ]
+
+        async def play_media(zid, media):
+            played_items.append((zid, media))
+
+        favs = FavoriteHandlers(
+            get_favs,
+            play_fav,
+            cycle_fav,
+            get_radios,
+            get_playlists,
+            play_media,
+            get_albums=get_albums,
+            get_artists=get_artists,
+        )
+
+        async def run():
+            # 1. Verify get_available_services contains config array (prevents n.config error in Loxone App)
+            res_avail = await favs.get_available_services("audio/cfg/getavailableservices")
+            self.assertEqual(res_avail.name, "getavailableservices")
+            self.assertTrue(len(res_avail.payload) > 0)
+            self.assertIn("config", res_avail.payload[0])
+            self.assertIsInstance(res_avail.payload[0]["config"], list)
+            self.assertTrue(len(res_avail.payload[0]["config"]) > 0)
+
+            # 2. Verify get_services announces Music Assistant library
+            res_services = await favs.get_services("audio/cfg/getservices")
+            self.assertEqual(res_services.name, "getservices")
+            self.assertEqual(res_services.payload[0]["cmd"], "spotify")
+            self.assertEqual(res_services.payload[0]["id"], "mass_library")
+            self.assertEqual(res_services.payload[0]["user"], "Music Assistant")
+
+            # 3. Verify get_service_folder for loxoneradio
+            res_radio_folder = await favs.get_service_folder("audio/cfg/getservicefolder/loxoneradio/noUser/root/0/50")
+            self.assertEqual(res_radio_folder.name, "getservicefolder")
+            self.assertEqual(len(res_radio_folder.payload), 1)
+            folder_data = res_radio_folder.payload[0]
+            self.assertEqual(folder_data["name"], "Radio")
+            self.assertEqual(len(folder_data["items"]), 1)
+            self.assertEqual(folder_data["items"][0]["name"], "SRF 3")
+            self.assertEqual(folder_data["items"][0]["audiopath"], "library://radio/1")
+            self.assertEqual(folder_data["items"][0]["type"], 2)
+
+            # 4. Verify get_service_folder for spotify root
+            res_mass_root = await favs.get_service_folder("audio/cfg/getservicefolder/spotify/mass_library/root/0/50")
+            root_items = res_mass_root.payload[0]["items"]
+            self.assertEqual(len(root_items), 4)
+            ids = [it["id"] for it in root_items]
+            self.assertIn("2", ids)  # Radios
+            self.assertIn("3", ids)  # Playlists
+            self.assertIn("5", ids)  # Albums
+            self.assertIn("6", ids)  # Artists
+
+            # 5. Verify get_service_folder sub-folders
+            res_playlists = await favs.get_service_folder("audio/cfg/getservicefolder/spotify/mass_library/3/0/50")
+            self.assertEqual(res_playlists.payload[0]["items"][0]["name"], "Best of Rock")
+            self.assertEqual(res_playlists.payload[0]["items"][0]["audiopath"], "library://playlist/10")
+
+            res_albums = await favs.get_service_folder("audio/cfg/getservicefolder/spotify/mass_library/5/0/50")
+            self.assertEqual(res_albums.payload[0]["items"][0]["name"], "Abbey Road")
+            self.assertEqual(res_albums.payload[0]["items"][0]["audiopath"], "library://album/100")
+
+            res_artists = await favs.get_service_folder("audio/cfg/getservicefolder/spotify/mass_library/6/0/50")
+            self.assertEqual(res_artists.payload[0]["items"][0]["name"], "Queen")
+            self.assertEqual(res_artists.payload[0]["items"][0]["audiopath"], "library://artist/200")
+
+            # 6. Verify serviceplay handles loxoneradio and spotify URLs
+            await favs.service_play("audio/1/serviceplay/loxoneradio/noUser/library%3A%2F%2Fradio%2F1")
+            self.assertEqual(played_items[-1], (1, "library://radio/1"))
+
+            await favs.service_play("audio/2/serviceplay/spotify/mass_library/library%3A%2F%2Fplaylist%2F10")
+            self.assertEqual(played_items[-1], (2, "library://playlist/10"))
+
+            # 7. Global search endpoints
+            gs_desc = await favs.global_search_describe("audio/cfg/globalsearch/describe")
+            self.assertEqual(gs_desc.name, "globalsearch")
+            self.assertIn("spotify", gs_desc.payload)
+
+            gs = await favs.global_search("audio/cfg/globalsearch")
+            self.assertEqual(gs.name, "globalsearch")
+            self.assertIn("unique", gs.payload)
+
+        asyncio.run(run())
+
+    def test_zone_recent_and_eq(self):
+        zh = ZoneHandlers(lambda zid: None, lambda zid, action, param: asyncio.sleep(0))
+
+        async def run():
+            res_recent = await zh.get_recent("audio/1/recent")
+            self.assertEqual(res_recent.name, "recent")
+            self.assertEqual(res_recent.payload, [])
+
+            res_eq = await zh.get_eq("audio/1/geteq")
+            self.assertEqual(res_eq.name, "geteq")
+            self.assertEqual(res_eq.payload, [])
 
         asyncio.run(run())
 

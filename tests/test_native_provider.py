@@ -66,6 +66,34 @@ class TestNativeLoxoneProvider(unittest.IsolatedAsyncioTestCase):
         plugin.server.stop.assert_awaited_once()
         plugin.discovery.stop.assert_awaited_once()
 
+    async def test_provider_service_routing(self):
+        plugin = LoxonePlugin(self.mock_mass, self.mock_manifest, self.mock_config)
+        plugin._register_routes()
+
+        # 1. Available services
+        res_avail = await plugin.router.dispatch("audio/cfg/getavailableservices")
+        self.assertEqual(res_avail.name, "getavailableservices")
+        self.assertIn("config", res_avail.payload[0])
+
+        # 2. Configured services
+        res_serv = await plugin.router.dispatch("audio/cfg/getservices")
+        self.assertEqual(res_serv.name, "getservices")
+
+        # 3. Service folder for radio
+        res_radio_folder = await plugin.router.dispatch("audio/cfg/getservicefolder/loxoneradio/noUser/root/0/50")
+        self.assertEqual(res_radio_folder.name, "getservicefolder")
+
+        # 4. Service folder for spotify/mass_library
+        res_mass_folder = await plugin.router.dispatch("audio/cfg/getservicefolder/spotify/mass_library/root/0/50")
+        self.assertEqual(res_mass_folder.name, "getservicefolder")
+
+        # 5. Zone recent and eq
+        res_recent = await plugin.router.dispatch("audio/1/recent")
+        self.assertEqual(res_recent.name, "recent")
+
+        res_eq = await plugin.router.dispatch("audio/1/geteq")
+        self.assertEqual(res_eq.name, "geteq")
+
 
 if __name__ == '__main__':
     unittest.main()

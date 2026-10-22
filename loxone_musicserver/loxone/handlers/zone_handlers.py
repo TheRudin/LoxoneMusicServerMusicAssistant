@@ -90,6 +90,10 @@ class ZoneHandlers:
         """Sets or gets equalizer settings."""
         return build_empty_response(command)
 
+    async def get_recent(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
+        """Returns recently played tracks for zone."""
+        return build_response(command, "recent", [])
+
     def _extract_zone_id(self, command: str, match: Optional[Match[str]]) -> int:
         if match and "zone" in match.groupdict():
             return int(match.group("zone"))

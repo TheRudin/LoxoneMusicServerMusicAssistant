@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Awaitable, Callable, Dict, List, Match, Optional
 from urllib.parse import unquote
 
@@ -23,6 +24,8 @@ class FavoriteHandlers:
         get_radios: Callable[[], Awaitable[List[Dict[str, Any]]]],
         get_playlists: Callable[[int, int], Awaitable[List[Dict[str, Any]]]],
         play_media: Callable[[int, str], Awaitable[None]],
+        get_albums: Optional[Callable[[int, int], Awaitable[List[Dict[str, Any]]]]] = None,
+        get_artists: Optional[Callable[[int, int], Awaitable[List[Dict[str, Any]]]]] = None,
     ) -> None:
         self.get_favorites = get_favorites
         self.play_favorite = play_favorite
@@ -30,6 +33,8 @@ class FavoriteHandlers:
         self._get_radios = get_radios
         self._get_playlists = get_playlists
         self.play_media = play_media
+        self._get_albums = get_albums
+        self._get_artists = get_artists
 
     async def get_room_favs(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         """Returns room favorites for a zone."""
@@ -81,34 +86,58 @@ class FavoriteHandlers:
         raw_radios = await self._get_radios()
         radios = []
         for r in raw_radios:
-            cover = ""
-            if isinstance(r.get("metadata"), dict):
-                images = r.get("metadata", {}).get("images") or []
-                if images and isinstance(images, list):
-                    cover = images[0].get("path", "")
             radios.append({
-                "id": str(r.get("item_id", len(radios) + 1)),
+                "id": str(r.get("id") or r.get("item_id", len(radios) + 1)),
                 "name": r.get("name", "Radio"),
-                "cover": cover,
-                "station": r.get("name", ""),
+                "cover": r.get("cover", ""),
+                "station": r.get("station") or r.get("name", "Radio"),
+                "audiopath": r.get("audiopath", f"radio:{r.get('id', '')}"),
+                "type": 2,
             })
         return build_response(command, "getradios", radios)
 
     async def get_services(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
-        """Returns streaming services configured."""
+        """Returns configured streaming services."""
         services = [
-            {"id": "musicassistant", "name": "Music Assistant", "icon": "service_ma"},
-            {"id": "spotify", "name": "Spotify", "icon": "service_spotify"},
-            {"id": "tunein", "name": "Radio / TuneIn", "icon": "service_tunein"},
+            {
+                "cmd": "spotify",
+                "name": "",
+                "icon": "https://raw.githubusercontent.com/music-assistant/frontend/main/src/assets/logo.png",
+                "id": "mass_library",
+                "user": "Music Assistant",
+                "email": "musicassistant@local",
+                "product": "premium",
+                "asdefault": [],
+                "offline_storage": [],
+                "configerror": False,
+                "provider": "musicassistant",
+                "fake": True,
+            }
         ]
         return build_response(command, "getservices", services)
 
     async def get_available_services(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
-        """Returns available service catalog."""
+        """Returns available service catalog with expected config schemas."""
         services = [
-            {"id": "musicassistant", "name": "Music Assistant", "icon": "service_ma"},
-            {"id": "spotify", "name": "Spotify", "icon": "service_spotify"},
-            {"id": "tunein", "name": "Radio / TuneIn", "icon": "service_tunein"},
+            {
+                "cmd": "spotify",
+                "name": "Spotify",
+                "icon": "https://extended-app-content.s3.eu-central-1.amazonaws.com/audioZone/services/Icon-Spotify.svg",
+                "helplink": "http://www.loxone.com/help/musicserver-spotify",
+                "registerlink": "https://www.spotify.com/signup",
+                "config": [
+                    {
+                        "name": "Username",
+                        "regex": "%5B%5E%3C%3E%26%25%5C%5C%2F'%5D%7B3%2C99%7D%24",
+                        "type": "text",
+                    },
+                    {
+                        "link": "https://www.spotify.com/legal/end-user-agreement",
+                        "name": "EULA",
+                        "type": "eula",
+                    },
+                ],
+            }
         ]
         return build_response(command, "getavailableservices", services)
 
@@ -118,20 +147,139 @@ class FavoriteHandlers:
         playlists = []
         for p in raw_playlists:
             playlists.append({
-                "id": str(p.get("item_id", len(playlists) + 1)),
+                "id": str(p.get("id") or p.get("item_id", len(playlists) + 1)),
                 "name": p.get("name", "Playlist"),
-                "totalitems": len(raw_playlists),
+                "totalitems": p.get("totalitems", len(raw_playlists)),
+                "cover": p.get("cover", ""),
+                "audiopath": p.get("audiopath", f"playlist:{p.get('id', '')}"),
+                "type": 7,
             })
         return build_response(command, "getplaylists2", playlists)
+
+    async def get_service_folder(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
+        """Handles audio/cfg/getservicefolder/<service>/<user>/<path>/<offset>/<limit>."""
+        parts = command.strip("/").split("/")
+        service = parts[3].lower() if len(parts) > 3 else "loxoneradio"
+        user = parts[4] if len(parts) > 4 else "noUser"
+        folder_path = unquote(parts[5]) if len(parts) > 5 else "root"
+        offset = int(parts[6]) if len(parts) > 6 and parts[6].isdigit() else 0
+        limit = int(parts[7]) if len(parts) > 7 and parts[7].isdigit() else 50
+
+        items: List[Dict[str, Any]] = []
+        folder_name = "Radio"
+
+        if service in ("loxoneradio", "radio", "tunein"):
+            folder_name = "Radio"
+            radios = await self._get_radios()
+            for r in radios:
+                items.append({
+                    "id": str(r.get("id") or r.get("item_id", len(items) + 1)),
+                    "name": r.get("name", "Radio"),
+                    "station": r.get("station") or r.get("name", "Radio"),
+                    "audiopath": r.get("audiopath", f"radio:{r.get('id', '')}"),
+                    "coverurl": r.get("cover", ""),
+                    "type": 2,  # FileType.File
+                })
+        else:
+            if folder_path in ("root", "start"):
+                folder_name = "Music Assistant"
+                items = [
+                    {"id": "2", "name": "Radiosender", "type": 7, "audiopath": "folder:radios"},
+                    {"id": "3", "name": "Playlists", "type": 7, "audiopath": "folder:playlists"},
+                    {"id": "5", "name": "Alben", "type": 7, "audiopath": "folder:albums"},
+                    {"id": "6", "name": "Künstler", "type": 7, "audiopath": "folder:artists"},
+                ]
+            elif folder_path in ("2", "radios"):
+                folder_name = "Radiosender"
+                radios = await self._get_radios()
+                for r in radios:
+                    items.append({
+                        "id": str(r.get("id") or r.get("item_id", len(items) + 1)),
+                        "name": r.get("name", "Radio"),
+                        "station": r.get("station") or r.get("name", "Radio"),
+                        "audiopath": r.get("audiopath", f"radio:{r.get('id', '')}"),
+                        "coverurl": r.get("cover", ""),
+                        "type": 2,
+                    })
+            elif folder_path in ("3", "playlists"):
+                folder_name = "Playlists"
+                playlists = await self._get_playlists(limit, offset)
+                for p in playlists:
+                    items.append({
+                        "id": str(p.get("id") or p.get("item_id", len(items) + 1)),
+                        "name": p.get("name", "Playlist"),
+                        "audiopath": p.get("audiopath", f"playlist:{p.get('id', '')}"),
+                        "coverurl": p.get("cover", ""),
+                        "totalitems": p.get("totalitems", 0),
+                        "type": 7,
+                    })
+            elif folder_path in ("5", "albums") and self._get_albums:
+                folder_name = "Alben"
+                albums = await self._get_albums(limit, offset)
+                for a in albums:
+                    items.append({
+                        "id": str(a.get("id") or a.get("item_id", len(items) + 1)),
+                        "name": a.get("name", "Album"),
+                        "artist": a.get("artist", ""),
+                        "audiopath": a.get("audiopath", f"album:{a.get('id', '')}"),
+                        "coverurl": a.get("cover", ""),
+                        "type": 7,
+                    })
+            elif folder_path in ("6", "artists") and self._get_artists:
+                folder_name = "Künstler"
+                artists = await self._get_artists(limit, offset)
+                for ar in artists:
+                    items.append({
+                        "id": str(ar.get("id") or ar.get("item_id", len(items) + 1)),
+                        "name": ar.get("name", "Künstler"),
+                        "audiopath": ar.get("audiopath", f"artist:{ar.get('id', '')}"),
+                        "coverurl": ar.get("cover", ""),
+                        "type": 7,
+                    })
+
+        paged_items = items[offset : offset + limit] if (offset > 0 or limit < len(items)) else items
+        folder_payload = {
+            "id": folder_path,
+            "name": folder_name,
+            "start": offset,
+            "totalitems": len(items),
+            "service": service,
+            "items": paged_items,
+        }
+        return build_response(command, "getservicefolder", [folder_payload])
+
+    async def global_search_describe(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
+        """Returns global search description."""
+        desc = {
+            "spotify": ["track", "album", "artist", "playlist"],
+            "local": ["track", "album", "artist", "playlist"],
+            "tunein": ["station", "custom"],
+        }
+        return build_response(command, "globalsearch", desc)
+
+    async def global_search(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
+        """Returns search token."""
+        unique = f"gs-{int(time.time() * 1000)}"
+        return build_response(command, "globalsearch", {"unique": unique})
 
     async def service_play(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         """Plays media from a streaming service or library path."""
         parts = command.strip("/").split("/")
         idx = 2 if len(parts) > 1 and parts[1] == "cfg" else 1
         zone_id = int(parts[idx]) if len(parts) > idx and parts[idx].isdigit() else 1
-        media_path = "/".join(parts[idx + 2 :]) if len(parts) > idx + 2 else ""
-        decoded_path = unquote(media_path)
+        subparts = parts[idx + 2 :]
+        if not subparts:
+            return build_empty_response(command)
 
+        if len(subparts) >= 3 and subparts[1] == "noUser":
+            media_path = "/".join(subparts[2:])
+        elif len(subparts) >= 3 and subparts[0] in ("spotify", "loxoneradio", "local", "radio", "tunein"):
+            media_path = "/".join(subparts[2:])
+        else:
+            media_path = "/".join(subparts)
+
+        decoded_path = unquote(media_path)
+        logger.info("service_play for zone %d: %s", zone_id, decoded_path)
         await self.play_media(zone_id, decoded_path)
         return build_empty_response(command)
 

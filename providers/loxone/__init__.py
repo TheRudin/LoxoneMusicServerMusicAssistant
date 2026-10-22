@@ -394,39 +394,146 @@ class LoxonePlugin(PluginProvider):
             radios: List[Dict[str, Any]] = []
             if hasattr(self.mass, 'music'):
                 try:
-                    items = await self.mass.music.get_library_radios()
+                    if hasattr(self.mass.music, 'radios') and hasattr(self.mass.music.radios, 'library_items'):
+                        items = await self.mass.music.radios.library_items()
+                    elif hasattr(self.mass.music, 'get_library_radios'):
+                        items = await self.mass.music.get_library_radios()
+                    else:
+                        items = []
                     for r in items:
+                        item_id = str(getattr(r, 'item_id', len(radios) + 1))
+                        uri = getattr(r, 'uri', None) or f"library://radio/{item_id}"
+                        cover = ""
+                        if img := getattr(r, 'image', None):
+                            cover = getattr(img, 'path', '') or str(img)
+                        elif hasattr(r, 'metadata') and getattr(r.metadata, 'images', None):
+                            cover = r.metadata.images[0].path if r.metadata.images else ""
                         radios.append({
-                            'id': str(getattr(r, 'item_id', len(radios) + 1)),
+                            'id': item_id,
                             'name': getattr(r, 'name', 'Radio Station'),
-                            'cover': getattr(getattr(r, 'image', None), 'path', ''),
+                            'cover': cover,
                             'station': getattr(r, 'name', ''),
+                            'audiopath': uri,
                         })
                 except Exception as exc:
                     LOGGER.debug('Error getting radios: %s', exc)
             return radios
 
-        async def get_playlists(start: int, limit: int) -> List[Dict[str, Any]]:
+        async def get_playlists(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
             playlists: List[Dict[str, Any]] = []
             if hasattr(self.mass, 'music'):
                 try:
-                    items = await self.mass.music.get_library_playlists()
+                    if hasattr(self.mass.music, 'playlists') and hasattr(self.mass.music.playlists, 'library_items'):
+                        items = await self.mass.music.playlists.library_items(offset=offset, limit=limit)
+                    elif hasattr(self.mass.music, 'get_library_playlists'):
+                        items = await self.mass.music.get_library_playlists()
+                    else:
+                        items = []
                     for p in items:
+                        item_id = str(getattr(p, 'item_id', len(playlists) + 1))
+                        uri = getattr(p, 'uri', None) or f"library://playlist/{item_id}"
+                        cover = ""
+                        if img := getattr(p, 'image', None):
+                            cover = getattr(img, 'path', '') or str(img)
+                        elif hasattr(p, 'metadata') and getattr(p.metadata, 'images', None):
+                            cover = p.metadata.images[0].path if p.metadata.images else ""
                         playlists.append({
-                            'id': str(getattr(p, 'item_id', len(playlists) + 1)),
+                            'id': item_id,
                             'name': getattr(p, 'name', 'Playlist'),
                             'totalitems': getattr(p, 'item_count', 0) or 0,
+                            'cover': cover,
+                            'audiopath': uri,
                         })
                 except Exception as exc:
                     LOGGER.debug('Error getting playlists: %s', exc)
             return playlists
 
+        async def get_albums(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+            albums: List[Dict[str, Any]] = []
+            if hasattr(self.mass, 'music'):
+                try:
+                    if hasattr(self.mass.music, 'albums') and hasattr(self.mass.music.albums, 'library_items'):
+                        items = await self.mass.music.albums.library_items(offset=offset, limit=limit)
+                    else:
+                        items = []
+                    for a in items:
+                        item_id = str(getattr(a, 'item_id', len(albums) + 1))
+                        uri = getattr(a, 'uri', None) or f"library://album/{item_id}"
+                        cover = ""
+                        if img := getattr(a, 'image', None):
+                            cover = getattr(img, 'path', '') or str(img)
+                        elif hasattr(a, 'metadata') and getattr(a.metadata, 'images', None):
+                            cover = a.metadata.images[0].path if a.metadata.images else ""
+                        artist_name = ""
+                        if hasattr(a, 'artists') and a.artists:
+                            artist_name = getattr(a.artists[0], 'name', '')
+                        elif hasattr(a, 'artist'):
+                            artist_name = getattr(a.artist, 'name', '') or str(a.artist)
+                        albums.append({
+                            'id': item_id,
+                            'name': getattr(a, 'name', 'Album'),
+                            'artist': artist_name,
+                            'cover': cover,
+                            'audiopath': uri,
+                        })
+                except Exception as exc:
+                    LOGGER.debug('Error getting albums: %s', exc)
+            return albums
+
+        async def get_artists(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+            artists: List[Dict[str, Any]] = []
+            if hasattr(self.mass, 'music'):
+                try:
+                    if hasattr(self.mass.music, 'artists') and hasattr(self.mass.music.artists, 'library_items'):
+                        items = await self.mass.music.artists.library_items(offset=offset, limit=limit)
+                    else:
+                        items = []
+                    for ar in items:
+                        item_id = str(getattr(ar, 'item_id', len(artists) + 1))
+                        uri = getattr(ar, 'uri', None) or f"library://artist/{item_id}"
+                        cover = ""
+                        if img := getattr(ar, 'image', None):
+                            cover = getattr(img, 'path', '') or str(img)
+                        elif hasattr(ar, 'metadata') and getattr(ar.metadata, 'images', None):
+                            cover = ar.metadata.images[0].path if ar.metadata.images else ""
+                        artists.append({
+                            'id': item_id,
+                            'name': getattr(ar, 'name', 'Artist'),
+                            'cover': cover,
+                            'audiopath': uri,
+                        })
+                except Exception as exc:
+                    LOGGER.debug('Error getting artists: %s', exc)
+            return artists
+
         async def play_media(zid: int, media: str) -> None:
             pid = self.zone_to_player.get(zid)
-            if pid and hasattr(self.mass, 'player_queues'):
-                await self.mass.player_queues.play_media(pid, media)
+            if not pid or not hasattr(self.mass, 'player_queues'):
+                return
+            target_media = media
+            if target_media.startswith("radio:"):
+                target_media = f"library://radio/{target_media.split(':', 1)[1]}"
+            elif target_media.startswith("playlist:"):
+                target_media = f"library://playlist/{target_media.split(':', 1)[1]}"
+            elif target_media.startswith("album:"):
+                target_media = f"library://album/{target_media.split(':', 1)[1]}"
+            elif target_media.startswith("artist:"):
+                target_media = f"library://artist/{target_media.split(':', 1)[1]}"
+            try:
+                await self.mass.player_queues.play_media(pid, target_media)
+            except Exception as exc:
+                LOGGER.error("Failed to play media %s on zone %d: %s", target_media, zid, exc)
 
-        favs = FavoriteHandlers(get_favs, play_fav, cycle_fav, get_radios, get_playlists, play_media)
+        favs = FavoriteHandlers(
+            get_favs,
+            play_fav,
+            cycle_fav,
+            get_radios,
+            get_playlists,
+            play_media,
+            get_albums=get_albums,
+            get_artists=get_artists,
+        )
 
         # Alerts & TTS
         async def play_tts(zids: List[int], text: str, lang: Optional[str], vol: Optional[int]) -> None:
@@ -469,6 +576,9 @@ class LoxonePlugin(PluginProvider):
 
         self.router.register_prefix('audio/cfg/getservices', favs.get_services)
         self.router.register_prefix('audio/cfg/getavailableservices', favs.get_available_services)
+        self.router.register_prefix('audio/cfg/getservicefolder', favs.get_service_folder)
+        self.router.register_prefix('audio/cfg/globalsearch/describe', favs.global_search_describe)
+        self.router.register_prefix('audio/cfg/globalsearch', favs.global_search)
         self.router.register_prefix('audio/cfg/getradios', favs.get_radios)
         self.router.register_prefix('audio/cfg/getplaylists2', favs.get_playlists)
         self.router.register_prefix('audio/cfg/getroomfavs', favs.get_room_favs)
@@ -476,6 +586,9 @@ class LoxonePlugin(PluginProvider):
 
         # Register Regexes
         self.router.register_regex(re.compile(r'^audio/(?:cfg/)?\d+/status/?$'), zone.get_status)
+        self.router.register_regex(re.compile(r'^audio/(?:cfg/)?\d+/recent'), zone.get_recent)
+        self.router.register_regex(re.compile(r'^audio/(?:cfg/)?\d+/geteq'), zone.get_eq)
+        self.router.register_regex(re.compile(r'^audio/(?:cfg/)?\d+/equalizer'), zone.equalizer)
         self.router.register_regex(re.compile(r'^audio/(?:cfg/)?\d+/getqueue'), queue.get_queue)
         self.router.register_regex(re.compile(r'^audio/(?:cfg/)?\d+/queue/clear'), queue.queue_clear)
         self.router.register_regex(re.compile(r'^audio/(?:cfg/)?\d+/queue/play/'), queue.queue_play)
