@@ -1,0 +1,28 @@
+{
+  "config_entries": {
+    "server_name": {
+      "label": "Server Name",
+      "description": "Name of the Loxone AudioServer as shown in Loxone Config and the Loxone App."
+    },
+    "listen_ip": {
+      "label": "Bind IP Address",
+      "description": "IP address to bind the Loxone HTTP/WebSocket listeners to (0.0.0.0 for all interfaces)."
+    },
+    "app_http_port": {
+      "label": "Loxone App Port (TCP)",
+      "description": "Port used for Loxone App HTTP requests and WebSockets (default: 7091)."
+    },
+    "ms_http_port": {
+      "label": "Loxone Miniserver Port (TCP)",
+      "description": "Port used for Miniserver HTTP requests and WebSockets (default: 7095)."
+    },
+    "udp_discovery_port": {
+      "label": "Discovery UDP Port",
+      "description": "Port used for Loxone UDP broadcast discovery (default: 7070)."
+    },
+    "mac_address": {
+      "label": "MAC Address",
+      "description": "Custom MAC address for the emulated AudioServer (leave empty to generate automatically)."
+    }
+  }
+}

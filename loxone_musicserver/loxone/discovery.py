@@ -81,11 +81,12 @@ class LoxoneDiscoveryService:
             logger.warning("Could not bind UDP discovery on port %d: %s", self.config.discovery_port, exc)
 
         # 2. Start mDNS advertisement
-        self._start_mdns()
+        await self._start_mdns()
 
-    def _start_mdns(self) -> None:
+    async def _start_mdns(self) -> None:
         try:
-            from zeroconf import IPVersion, ServiceInfo, Zeroconf
+            from zeroconf import IPVersion, ServiceInfo
+            from zeroconf.asyncio import AsyncZeroconf
 
             desc = {
                 "version": self.config.mdns_version,
@@ -95,7 +96,7 @@ class LoxoneDiscoveryService:
                 "mac": self.config.formatted_mac,
             }
 
-            self.zeroconf = Zeroconf(ip_version=IPVersion.V4Only)
+            self.zeroconf = AsyncZeroconf(ip_version=IPVersion.V4Only)
             self.service_info = ServiceInfo(
                 "_http._tcp.local.",
                 f"{self.config.server_name}._http._tcp.local.",
@@ -104,7 +105,7 @@ class LoxoneDiscoveryService:
                 properties=desc,
                 server="audioserver.local.",
             )
-            self.zeroconf.register_service(self.service_info)
+            await self.zeroconf.async_register_service(self.service_info)
             logger.info("mDNS service registered for Audioserver on port %d", self.config.app_port)
         except Exception as exc:
             logger.warning("mDNS registration skipped or failed: %s", exc)
@@ -127,8 +128,8 @@ class LoxoneDiscoveryService:
 
         if self.zeroconf and self.service_info:
             try:
-                self.zeroconf.unregister_service(self.service_info)
-                self.zeroconf.close()
+                await self.zeroconf.async_unregister_service(self.service_info)
+                await self.zeroconf.async_close()
             except Exception as exc:
                 logger.warning("Error stopping mDNS: %s", exc)
             self.zeroconf = None

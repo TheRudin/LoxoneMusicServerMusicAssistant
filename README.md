@@ -133,9 +133,32 @@ For detailed instructions on discovering and adding the AudioServer in **Loxone 
 
 ---
 
-## Testing
+## Running as Native Music Assistant Plugin
 
-Run the automated test suite:
+The plugin is also available as a fully self-contained Music Assistant Plugin Provider in `providers/loxone/`:
+
+1. **Copy to Music Assistant:**
+   Place the `providers/loxone` folder into your Music Assistant `providers` directory:
+   ```bash
+   # On Unraid Docker:
+   docker cp providers/loxone music-assistant:/app/venv/lib/python3.12/site-packages/music_assistant/providers/loxone
+   docker restart music-assistant
+   ```
+2. **Enable in Music Assistant UI:**
+   Navigate to **Settings -> Plugins -> Add Plugin** -> Select **Loxone Music Server** and click **Save**.
+3. Music Assistant will run the Loxone AudioServer in-process, listening on UDP 7070, TCP 7091, and TCP 7095 with zero network overhead.
+
+---
+
+## Testing & Endpoint Verification
+
+Run the comprehensive 25-endpoint live verification suite:
+
+```bash
+python3 verify_endpoints.py
+```
+
+Run unit tests:
 
 ```bash
 python3 -m unittest discover -s tests -p "test_*.py" -v

@@ -200,10 +200,10 @@ class MusicAssistantClient:
 
     async def play_media(self, queue_id: str, media: str, option: str = "play") -> Any:
         """Plays media item in player queue."""
-        return await self.queue_cmd(
-            queue_id,
-            "play_media",
+        return await self.rpc(
+            "player_queues/play_media",
             {
+                "queue_id": queue_id,
                 "media": media,
                 "option": option,
             },
@@ -216,12 +216,12 @@ class MusicAssistantClient:
 
     async def get_radios(self) -> List[Dict[str, Any]]:
         """Gets radio stations from library."""
-        res = await self.rpc("music/radios")
+        res = await self.rpc("music/radios/library_items")
         return res if isinstance(res, list) else []
 
-    async def get_playlists(self) -> List[Dict[str, Any]]:
+    async def get_playlists(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         """Gets playlists from library."""
-        res = await self.rpc("music/playlists")
+        res = await self.rpc("music/playlists/library_items", {"limit": limit, "offset": offset})
         return res if isinstance(res, list) else []
 
     async def close(self) -> None:

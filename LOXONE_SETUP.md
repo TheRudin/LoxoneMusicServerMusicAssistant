@@ -63,17 +63,57 @@ Sobald das Projekt im Miniserver aktiv ist, können Sie in der **Loxone App** (i
 
 ## 5. Zwei Betriebsmodi
 
-### Modus A: Standalone Bridge (Empfohlen für sofortigen Start)
-Der Emulator läuft als eigener Prozess oder Docker-Container. Er verbindet sich über das Netzwerk mit Ihrem Music Assistant:
+### Modus A: Direkt als natives Music Assistant Plugin (Empfohlen)
+
+Das Plugin liegt als vollständiges, in sich geschlossenes Provider-Paket im Verzeichnis `providers/loxone/` bereit.
+
+#### Installation auf Unraid:
+In Unraid läuft Music Assistant als Docker-Container. Um das Plugin direkt in Music Assistant zu laden:
+
+1. **Option 1: Über das Unraid Terminal (schnellste Methode)**
+   Kopieren Sie den Ordner `providers/loxone` direkt in den laufenden Container:
+   ```bash
+   docker cp providers/loxone music-assistant:/app/venv/lib/python3.12/site-packages/music_assistant/providers/loxone
+   docker restart music-assistant
+   ```
+
+2. **Option 2: Über Docker Volume-Mapping (dauerhaft bei Updates)**
+   Kopieren Sie den Ordner `providers/loxone` nach `/mnt/user/appdata/music-assistant/custom_providers/loxone` und fügen Sie in der Unraid Docker-Vorlage für Music Assistant einen neuen Pfad hinzu:
+   - **Container-Pfad:** `/app/venv/lib/python3.12/site-packages/music_assistant/providers/loxone`
+   - **Host-Pfad:** `/mnt/user/appdata/music-assistant/custom_providers/loxone`
+   - **Zugriffsmodus:** Lesen/Schreiben
+
+3. **Plugin aktivieren:**
+   - Öffnen Sie Music Assistant (`http://192.168.1.10:8095`).
+   - Gehen Sie auf **Einstellungen** -> **Plugins** -> **Plugin hinzufügen**.
+   - Wählen Sie **Loxone Music Server** aus.
+   - Passen Sie optional Einstellungen (Name, Ports) an und klicken Sie auf **Speichern**.
+   - Music Assistant startet den Loxone AudioServer direkt im Container auf den Ports `7070` (UDP), `7091` (TCP) und `7095` (TCP).
+
+---
+
+### Modus B: Standalone Bridge
+
+Der Emulator kann auch als unabhängiger Hintergrunddienst oder Docker-Container auf einem beliebigen Rechner/Server im Netzwerk laufen:
+
 ```bash
+# Mit virtueller Umgebung oder lokalem Python:
 python3 -m loxone_musicserver.main --ma-url http://192.168.1.10:8095 --username admin --password "your_password"
-```
-Oder via Docker Compose:
-```bash
+
+# Oder via Docker Compose:
 docker compose up -d
 ```
 
-### Modus B: Natives Music Assistant Plugin
-Kopieren Sie das Verzeichnis `loxone_musicserver/provider` in das Provider-Verzeichnis Ihrer Music Assistant Installation unter:
-`music_assistant/providers/loxone/`
-Music Assistant erkennt das Plugin beim Neustart automatisch über `manifest.json`.
+---
+
+## 6. Endpunkte & Verifikation
+
+Das Projekt enthält eine vollständige Verifikations-Suite `verify_endpoints.py`. Diese prüft alle 25 Loxone Schnittstellen live gegen Music Assistant:
+```bash
+python3 verify_endpoints.py
+```
+Geprüft werden:
+- UDP 7070 Discovery Probe & Response
+- TCP 7091 App HTTP Endpunkte (`ready`, `getkey/full`, `getconfig`, `getservices`, `getradios`, `getplaylists2`)
+- TCP 7091 Status & Steuerung für alle Zonen (`status`, `volume`, `play`, `pause`, `tts`, `bell`)
+- TCP 7091 & 7095 WebSockets Handshake (`LWSS V 17.1.05.05`) & Heartbeat (`server_heartbeat`)

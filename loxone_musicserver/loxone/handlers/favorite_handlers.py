@@ -27,8 +27,8 @@ class FavoriteHandlers:
         self.get_favorites = get_favorites
         self.play_favorite = play_favorite
         self.cycle_favorite = cycle_favorite
-        self.get_radios = get_radios
-        self.get_playlists = get_playlists
+        self._get_radios = get_radios
+        self._get_playlists = get_playlists
         self.play_media = play_media
 
     async def get_room_favs(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
@@ -78,7 +78,20 @@ class FavoriteHandlers:
 
     async def get_radios(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         """Returns radio stations available in Music Assistant."""
-        radios = await self.get_radios()
+        raw_radios = await self._get_radios()
+        radios = []
+        for r in raw_radios:
+            cover = ""
+            if isinstance(r.get("metadata"), dict):
+                images = r.get("metadata", {}).get("images") or []
+                if images and isinstance(images, list):
+                    cover = images[0].get("path", "")
+            radios.append({
+                "id": str(r.get("item_id", len(radios) + 1)),
+                "name": r.get("name", "Radio"),
+                "cover": cover,
+                "station": r.get("name", ""),
+            })
         return build_response(command, "getradios", radios)
 
     async def get_services(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
@@ -101,7 +114,14 @@ class FavoriteHandlers:
 
     async def get_playlists(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         """Returns playlists."""
-        playlists = await self.get_playlists(0, 50)
+        raw_playlists = await self._get_playlists(50, 0)
+        playlists = []
+        for p in raw_playlists:
+            playlists.append({
+                "id": str(p.get("item_id", len(playlists) + 1)),
+                "name": p.get("name", "Playlist"),
+                "totalitems": len(raw_playlists),
+            })
         return build_response(command, "getplaylists2", playlists)
 
     async def service_play(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
