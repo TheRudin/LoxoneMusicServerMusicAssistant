@@ -47,3 +47,4 @@ coverage.xml
 public/alerts/cache/
 *.log
 config.json
+data/

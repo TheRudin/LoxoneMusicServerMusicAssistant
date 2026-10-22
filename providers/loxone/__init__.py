@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 import re
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -61,6 +62,7 @@ CONF_MS_PORT = 'ms_http_port'
 CONF_UDP_PORT = 'udp_discovery_port'
 CONF_MAC_ADDRESS = 'mac_address'
 CONF_MINISERVER_SERIAL = 'miniserver_serial'
+CONF_MINISERVER_IP = 'miniserver_ip'
 
 
 async def setup(
@@ -158,11 +160,23 @@ class LoxonePlugin(PluginProvider):
                 description='Serial number of paired Miniserver (e.g. 504F94101A6D or MS1A6D; auto-detected if empty)',
                 required=False,
             ),
+            ConfigEntry(
+                key=CONF_MINISERVER_IP,
+                type=ConfigEntryType.STRING,
+                default_value=self.server_config.miniserver_ip,
+                label='Miniserver IP Address',
+                description='IP address of the Loxone Miniserver (default 192.168.1.107)',
+                required=False,
+            ),
         )
 
     async def loaded_in_mass(self) -> None:
         """Called when Music Assistant starts the provider."""
         LOGGER.info('Starting Loxone AudioServer provider in Music Assistant...')
+
+        # Configure storage path from Mass if available
+        if hasattr(self.mass, 'storage_path') and self.mass.storage_path:
+            self.server_config.data_dir = Path(self.mass.storage_path) / "loxone"
 
         # Load user configuration overrides if available
         def _get_val(key: str) -> Any:
@@ -190,6 +204,8 @@ class LoxonePlugin(PluginProvider):
             self.server_config.mac_address = str(mac)
         if mserial := _get_val(CONF_MINISERVER_SERIAL):
             self.server_config.master_serial = str(mserial).strip()
+        if ms_ip := _get_val(CONF_MINISERVER_IP):
+            self.server_config.miniserver_ip = str(ms_ip).strip()
 
         self._register_routes()
         self._sync_zones_from_mass()
@@ -216,6 +232,14 @@ class LoxonePlugin(PluginProvider):
             self.server_config.app_port,
             self.server_config.ms_port,
         )
+
+        if self.server_config.uuid and self.server_config.miniserver_ip:
+            LOGGER.info(
+                'Scheduling Miniserver startup notification on boot (UUID: %s, MS IP: %s)',
+                self.server_config.uuid,
+                self.server_config.miniserver_ip,
+            )
+            asyncio.create_task(self.cfg.notify_miniserver_startup())
 
     async def unload(self, is_removed: bool = False) -> None:
         """Called when Music Assistant stops or removes the provider."""
@@ -291,7 +315,8 @@ class LoxonePlugin(PluginProvider):
         """Registers all Loxone command routes."""
         secure = SecureHandlers(self.server_config.master_serial)
         self.secure = secure
-        cfg = ConfigHandlers(self.server_config, self.crypto, self._apply_loxone_config)
+        cfg = ConfigHandlers(self.server_config, self.crypto, self._apply_loxone_config, notifier=self.notifier)
+        self.cfg = cfg
 
         # Zone controls
         async def send_cmd(zid: int, action: str, param: Any) -> None:
@@ -422,6 +447,8 @@ class LoxonePlugin(PluginProvider):
         self.router.register_prefix('audio/cfg/identify', cfg.identify)
         self.router.register_prefix('audio/cfg/diagnosis', cfg.diagnosis)
         self.router.register_prefix('audio/cfg/restart', cfg.restart)
+        self.router.register_prefix('audio/cfg/devicestartup', cfg.trigger_startup)
+        self.router.register_prefix('audio/cfg/trigger_startup', cfg.trigger_startup)
 
         self.router.register_prefix('audio/cfg/getservices', favs.get_services)
         self.router.register_prefix('audio/cfg/getavailableservices', favs.get_available_services)
@@ -450,14 +477,29 @@ class LoxonePlugin(PluginProvider):
         )
 
     def _apply_loxone_config(self, raw_cfg: Any) -> None:
-        """Parses deployed Loxone config to extract master pairing information."""
-        if isinstance(raw_cfg, list):
-            mac_needle = self.server_config.clean_mac
-            for entry in raw_cfg:
-                if isinstance(entry, dict):
-                    for k, v in entry.items():
-                        if k.replace(":", "").replace("-", "").upper() == mac_needle and isinstance(v, dict):
-                            master = v.get("master")
-                            if master and hasattr(self, "secure"):
-                                self.secure.set_master(str(master))
-                                self.server_config.master_serial = str(master)
+        """Parses deployed Loxone config to extract master pairing and UUID information."""
+        mac_needle = self.server_config.clean_mac
+        entries = raw_cfg if isinstance(raw_cfg, list) else ([raw_cfg] if isinstance(raw_cfg, dict) else [])
+        for entry in entries:
+            if isinstance(entry, dict):
+                for k, v in entry.items():
+                    if k.replace(":", "").replace("-", "").upper() == mac_needle and isinstance(v, dict):
+                        master = v.get("master")
+                        if master:
+                            clean_m = str(master).replace(":", "").replace("-", "").upper()
+                            self.server_config.master_serial = clean_m
+                            if hasattr(self, "secure"):
+                                self.secure.set_master(clean_m)
+                        if uuid_val := v.get("uuid"):
+                            self.server_config.uuid = str(uuid_val).strip()
+                        if ip_val := (v.get("ip") or v.get("host_ip")):
+                            self.server_config.miniserver_ip = str(ip_val).strip()
+                        if name_val := v.get("name"):
+                            self.server_config.server_name = str(name_val).strip()
+                        LOGGER.info(
+                            "Applied Loxone config: uuid=%s, ms_ip=%s, master=%s, name=%s",
+                            self.server_config.uuid,
+                            self.server_config.miniserver_ip,
+                            self.server_config.master_serial,
+                            self.server_config.server_name,
+                        )

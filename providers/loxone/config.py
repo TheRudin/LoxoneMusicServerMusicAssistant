@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Optional
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,10 @@ class ServerConfig:
     api_version: str = "~API:1.6~"
     session_token: str = "8WahwAfULwEQce9Yu0qIE9L7QMkXFHbi0M9ch9vKcgYArPPojXHpSiNcq0fT3lqL"
     master_serial: str = ""
+    uuid: str = ""
+    miniserver_ip: str = field(default_factory=lambda: os.environ.get("MINISERVER_IP", "192.168.1.107"))
+    miniserver_port: int = 80
+    last_startup_ping: Optional[dict] = None
 
     # Network ports
     host: str = "0.0.0.0"

@@ -63,6 +63,8 @@ class LoxoneServer:
                 path = request.path.lstrip("/")
 
             logger.debug("[%s] HTTP %s /%s", server_name, request.method, path)
+            if not path.startswith("audio/cfg/diagnosis"):
+                self.notifier.record_command(server_name, "http", f"{request.method} /{path}")
 
             result = await self.router.dispatch(path, payload)
             response_text = serialize_result(result)

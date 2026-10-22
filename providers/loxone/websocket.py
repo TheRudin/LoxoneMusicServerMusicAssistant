@@ -66,9 +66,33 @@ class LoxoneWebSocketNotifier:
         self.get_all_states = get_all_states
         self.router = router
         self.connections: Set[Tuple[web.WebSocketResponse, str]] = set()
+        self.recent_commands: List[Dict[str, Any]] = []
         self._heartbeat_task: Optional[asyncio.Task[None]] = None
         self._running = False
         self._start_time = time.time()
+
+    def record_command(self, source: str, proto: str, command: str) -> None:
+        """Records a recent command for diagnosis."""
+        trimmed = command[:120] + "..." if len(command) > 120 else command
+        self.recent_commands.append({
+            "time": int(time.time()),
+            "source": source,
+            "proto": proto,
+            "command": trimmed,
+        })
+        if len(self.recent_commands) > 30:
+            self.recent_commands = self.recent_commands[-30:]
+
+    def get_connection_info(self) -> List[Dict[str, Any]]:
+        """Returns details on currently connected WebSocket clients."""
+        res = []
+        for ws, srv in list(self.connections):
+            res.append({"server": srv, "closed": ws.closed})
+        return res
+
+    def get_recent_commands(self) -> List[Dict[str, Any]]:
+        """Returns recent commands received via HTTP or WebSocket."""
+        return list(self.recent_commands)
 
     def set_router(self, router: Any) -> None:
         """Sets or updates the router for WS command dispatch."""
@@ -154,6 +178,8 @@ class LoxoneWebSocketNotifier:
                 if msg.type == web.WSMsgType.TEXT:
                     command = msg.data.strip()
                     logger.debug("Received WS text from %s: %s", server_name, command)
+                    if command:
+                        self.record_command(server_name, "ws", command)
                     if command and self.router:
                         try:
                             result = await self.router.dispatch(command)

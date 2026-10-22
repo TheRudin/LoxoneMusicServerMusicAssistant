@@ -148,7 +148,9 @@ class LoxoneMusicServerPlugin(PluginProvider):
     def _register_routes(self) -> None:
         """Registers all Loxone command routes."""
         secure = SecureHandlers()
-        cfg = ConfigHandlers(self.server_config, self.crypto, self._apply_loxone_config)
+        self.secure = secure
+        cfg = ConfigHandlers(self.server_config, self.crypto, self._apply_loxone_config, notifier=self.notifier)
+        self.cfg = cfg
 
         # Zone controls
         async def send_cmd(zid: int, action: str, param: Any) -> None:
@@ -226,6 +228,8 @@ class LoxoneMusicServerPlugin(PluginProvider):
         self.router.register_prefix("audio/cfg/identify", cfg.identify)
         self.router.register_prefix("audio/cfg/diagnosis", cfg.diagnosis)
         self.router.register_prefix("audio/cfg/restart", cfg.restart)
+        self.router.register_prefix("audio/cfg/devicestartup", cfg.trigger_startup)
+        self.router.register_prefix("audio/cfg/trigger_startup", cfg.trigger_startup)
 
         self.router.register_prefix("audio/cfg/getservices", favs.get_services)
         self.router.register_prefix("audio/cfg/getavailableservices", favs.get_available_services)
@@ -256,4 +260,22 @@ class LoxoneMusicServerPlugin(PluginProvider):
         )
 
     def _apply_loxone_config(self, raw_cfg: Any) -> None:
-        pass
+        """Parses deployed Loxone config to extract master pairing and UUID information."""
+        mac_needle = self.server_config.clean_mac
+        entries = raw_cfg if isinstance(raw_cfg, list) else ([raw_cfg] if isinstance(raw_cfg, dict) else [])
+        for entry in entries:
+            if isinstance(entry, dict):
+                for k, v in entry.items():
+                    if k.replace(":", "").replace("-", "").upper() == mac_needle and isinstance(v, dict):
+                        master = v.get("master")
+                        if master:
+                            clean_m = str(master).replace(":", "").replace("-", "").upper()
+                            self.server_config.master_serial = clean_m
+                            if hasattr(self, "secure"):
+                                self.secure.set_master(clean_m)
+                        if uuid_val := v.get("uuid"):
+                            self.server_config.uuid = str(uuid_val).strip()
+                        if ip_val := (v.get("ip") or v.get("host_ip")):
+                            self.server_config.miniserver_ip = str(ip_val).strip()
+                        if name_val := v.get("name"):
+                            self.server_config.server_name = str(name_val).strip()

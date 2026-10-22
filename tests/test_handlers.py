@@ -86,6 +86,54 @@ class TestHandlers(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_config_extraction_and_devicestartup(self):
+        import base64
+        import json
+
+        async def run():
+            # Create sample Loxone setconfig JSON with matching clean_mac
+            clean_mac = self.config.clean_mac
+            sample_config = [
+                {
+                    clean_mac: {
+                        "uuid": "14f3b890-023a-11ee-be56-0242ac120002",
+                        "name": "Audioserver 101",
+                        "ip": "192.168.1.107",
+                        "port": 80,
+                        "host": "192.168.1.10",
+                        "master": "504F94D01A6D",
+                        "players": [],
+                        "extensions": [],
+                    }
+                }
+            ]
+            raw_json = json.dumps(sample_config)
+            b64_payload = base64.b64encode(raw_json.encode("utf-8")).decode("utf-8")
+
+            res = await self.cfg.set_config(f"audio/cfg/setconfig/{b64_payload}")
+            self.assertEqual(res.name, "setconfig")
+            self.assertIsNotNone(res.payload["crc32"])
+
+            # Verify ServerConfig was updated
+            self.assertEqual(self.config.uuid, "14f3b890-023a-11ee-be56-0242ac120002")
+            self.assertEqual(self.config.miniserver_ip, "192.168.1.107")
+            self.assertEqual(self.config.master_serial, "504F94D01A6D")
+            self.assertEqual(self.config.server_name, "Audioserver 101")
+
+            # Verify diagnosis returns enriched info
+            diag = await self.cfg.diagnosis("audio/cfg/diagnosis")
+            self.assertEqual(diag.payload["uuid"], "14f3b890-023a-11ee-be56-0242ac120002")
+            self.assertEqual(diag.payload["miniserver_ip"], "192.168.1.107")
+            self.assertEqual(diag.payload["master_serial"], "504F94D01A6D")
+            self.assertTrue(diag.payload["paired"])
+
+            # Test trigger_startup returns status dictionary
+            startup_res = await self.cfg.trigger_startup("audio/cfg/trigger_startup")
+            self.assertIn("timestamp", startup_res.payload)
+            self.assertEqual(startup_res.payload["url"], "http://192.168.1.107:80/dev/sps/devicestartup/14f3b890-023a-11ee-be56-0242ac120002")
+
+        asyncio.run(run())
+
 
 if __name__ == "__main__":
     unittest.main()
