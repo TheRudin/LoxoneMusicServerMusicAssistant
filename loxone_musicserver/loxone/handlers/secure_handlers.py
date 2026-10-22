@@ -22,6 +22,11 @@ class SecureHandlers:
     def __init__(self, master_serial: str = "") -> None:
         self.master_serial = master_serial
 
+    def set_master(self, serial: str) -> None:
+        """Sets the paired Miniserver master serial."""
+        self.master_serial = serial.strip()
+        logger.info("Pairing updated: master Miniserver is '%s'", self.master_serial)
+
     async def hello(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         parts = command.strip("/").split("/")
         public_key = parts[2] if len(parts) > 2 else ""
@@ -36,12 +41,13 @@ class SecureHandlers:
         )
 
     async def info_pairing(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
+        is_paired = bool(self.master_serial)
         return build_response(
             command,
             "secure_infopairing",
             {
                 "command": "secure/infopairing",
-                "error": -81,
+                "error": 0 if is_paired else -81,
                 "master": self.master_serial.upper() if self.master_serial else "",
                 "peers": [],
             },

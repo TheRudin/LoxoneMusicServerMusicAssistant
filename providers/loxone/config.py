@@ -27,6 +27,7 @@ class ServerConfig:
     mdns_version: str = "17.02.08.28"
     api_version: str = "~API:1.6~"
     session_token: str = "8WahwAfULwEQce9Yu0qIE9L7QMkXFHbi0M9ch9vKcgYArPPojXHpSiNcq0fT3lqL"
+    master_serial: str = ""
 
     # Network ports
     host: str = "0.0.0.0"

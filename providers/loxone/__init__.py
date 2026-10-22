@@ -60,6 +60,7 @@ CONF_APP_PORT = 'app_http_port'
 CONF_MS_PORT = 'ms_http_port'
 CONF_UDP_PORT = 'udp_discovery_port'
 CONF_MAC_ADDRESS = 'mac_address'
+CONF_MINISERVER_SERIAL = 'miniserver_serial'
 
 
 async def setup(
@@ -149,6 +150,14 @@ class LoxonePlugin(PluginProvider):
                 description='Custom MAC address (leave empty for auto)',
                 required=False,
             ),
+            ConfigEntry(
+                key=CONF_MINISERVER_SERIAL,
+                type=ConfigEntryType.STRING,
+                default_value=self.server_config.master_serial,
+                label='Miniserver Serial',
+                description='Serial number of paired Miniserver (e.g. 504F94101A6D or MS1A6D; auto-detected if empty)',
+                required=False,
+            ),
         )
 
     async def loaded_in_mass(self) -> None:
@@ -179,6 +188,8 @@ class LoxonePlugin(PluginProvider):
             self.server_config.discovery_port = int(uport)
         if mac := _get_val(CONF_MAC_ADDRESS):
             self.server_config.mac_address = str(mac)
+        if mserial := _get_val(CONF_MINISERVER_SERIAL):
+            self.server_config.master_serial = str(mserial).strip()
 
         self._register_routes()
         self._sync_zones_from_mass()
@@ -278,7 +289,8 @@ class LoxonePlugin(PluginProvider):
 
     def _register_routes(self) -> None:
         """Registers all Loxone command routes."""
-        secure = SecureHandlers()
+        secure = SecureHandlers(self.server_config.master_serial)
+        self.secure = secure
         cfg = ConfigHandlers(self.server_config, self.crypto, self._apply_loxone_config)
 
         # Zone controls
@@ -438,4 +450,14 @@ class LoxonePlugin(PluginProvider):
         )
 
     def _apply_loxone_config(self, raw_cfg: Any) -> None:
-        pass
+        """Parses deployed Loxone config to extract master pairing information."""
+        if isinstance(raw_cfg, list):
+            mac_needle = self.server_config.clean_mac
+            for entry in raw_cfg:
+                if isinstance(entry, dict):
+                    for k, v in entry.items():
+                        if k.replace(":", "").replace("-", "").upper() == mac_needle and isinstance(v, dict):
+                            master = v.get("master")
+                            if master and hasattr(self, "secure"):
+                                self.secure.set_master(str(master))
+                                self.server_config.master_serial = str(master)
