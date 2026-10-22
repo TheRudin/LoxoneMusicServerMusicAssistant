@@ -72,11 +72,11 @@ DEFAULT_RADIO_STATIONS: List[Dict[str, Any]] = [
 ]
 
 
-def extract_service_play_media(command: str) -> tuple[int, str, Optional[bool]]:
-    """Extracts zone_id, clean media URI, and optional shuffle flag from a serviceplay command."""
+def extract_service_play_media(command: str) -> tuple[int, str, Optional[str], Optional[bool]]:
+    """Extracts zone_id, clean media URI, optional parent URI, and optional shuffle flag from a serviceplay command."""
     sp_idx = command.find("serviceplay/")
     if sp_idx == -1:
-        return 1, "", None
+        return 1, "", None, None
 
     prefix = command[:sp_idx].strip("/")
     zparts = prefix.split("/")
@@ -100,15 +100,30 @@ def extract_service_play_media(command: str) -> tuple[int, str, Optional[bool]]:
         raw_media = raw_media[:-10]
 
     raw_media = raw_media.rstrip("/")
-    decoded = unquote(raw_media)
-    if "://" in decoded:
-        proto, path = decoded.split("://", 1)
-        decoded = f"{proto}://{path.lstrip('/')}"
-    elif ":/" in decoded:
-        proto, path = decoded.split(":/", 1)
-        decoded = f"{proto}://{path.lstrip('/')}"
 
-    return zone_id, decoded, shuffle
+    parent_media: Optional[str] = None
+    if "/parentpath/" in raw_media:
+        item_part, parent_part = raw_media.split("/parentpath/", 1)
+        raw_media = item_part
+        pparts = parent_part.split("/")
+        if len(pparts) > 1 and pparts[-1].isdigit():
+            parent_media = "/".join(pparts[:-1])
+        else:
+            parent_media = parent_part
+
+    def clean_uri(uri: Optional[str]) -> Optional[str]:
+        if not uri:
+            return None
+        decoded = unquote(uri)
+        if "://" in decoded:
+            proto, path = decoded.split("://", 1)
+            return f"{proto}://{path.lstrip('/')}"
+        elif ":/" in decoded:
+            proto, path = decoded.split(":/", 1)
+            return f"{proto}://{path.lstrip('/')}"
+        return decoded
+
+    return zone_id, clean_uri(raw_media) or "", clean_uri(parent_media), shuffle
 
 
 class FavoriteHandlers:
@@ -548,12 +563,21 @@ class FavoriteHandlers:
 
     async def service_play(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         """Plays media from a streaming service or library path."""
-        zone_id, decoded_path, shuffle = extract_service_play_media(command)
+        zone_id, decoded_path, parent_path, shuffle = extract_service_play_media(command)
         if not decoded_path:
             return build_response(command, "serviceplay", "ok")
 
-        logger.info("service_play for zone %d: %s (shuffle=%s)", zone_id, decoded_path, shuffle)
-        await self.play_media(zone_id, decoded_path)
+        logger.info(
+            "service_play for zone %d: media=%s, parent=%s (shuffle=%s)",
+            zone_id,
+            decoded_path,
+            parent_path,
+            shuffle,
+        )
+        try:
+            await self.play_media(zone_id, decoded_path, parent_path, shuffle)
+        except TypeError:
+            await self.play_media(zone_id, decoded_path)
         return build_response(command, "serviceplay", "ok")
 
     async def play_url(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:

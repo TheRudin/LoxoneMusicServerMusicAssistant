@@ -276,8 +276,8 @@ class TestHandlers(unittest.TestCase):
                 }
             ]
 
-        async def play_media(zid, media):
-            played_items.append((zid, media))
+        async def play_media(zid, media, parent=None, shuffle=None):
+            played_items.append((zid, media, parent, shuffle))
 
         favs = FavoriteHandlers(
             get_favs,
@@ -412,42 +412,55 @@ class TestHandlers(unittest.TestCase):
             self.assertEqual(fallback_items[0]["name"], "Radio SRF 3")
             self.assertEqual(fallback_items[0]["type"], 2)
 
-            # 10. Verify serviceplay handles complex Loxone URLs (with query parameters and /noshuffle)
+            # 10. Verify serviceplay handles complex Loxone URLs (with query parameters, /parentpath/, and /noshuffle)
             res_sp1 = await favs.service_play("audio/1/serviceplay/loxoneradio/noUser/library%3A%2F%2Fradio%2F1")
-            self.assertEqual(played_items[-1], (1, "library://radio/1"))
+            self.assertEqual(played_items[-1], (1, "library://radio/1", None, None))
             self.assertEqual(res_sp1.payload, "ok")
 
             res_sp2 = await favs.service_play("audio/2/serviceplay/spotify/mass_library/library%3A%2F%2Fplaylist%2F10")
-            self.assertEqual(played_items[-1], (2, "library://playlist/10"))
+            self.assertEqual(played_items[-1], (2, "library://playlist/10", None, None))
             self.assertEqual(res_sp2.payload, "ok")
 
             res_sp_radio = await favs.service_play("audio/1/serviceplay/radio/nouser/http://stream.srg-ssr.ch/m/srf1/mp3_128/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
-            self.assertEqual(played_items[-1], (1, "http://stream.srg-ssr.ch/m/srf1/mp3_128"))
+            self.assertEqual(played_items[-1], (1, "http://stream.srg-ssr.ch/m/srf1/mp3_128", None, None))
             self.assertEqual(res_sp_radio.payload, "ok")
 
             res_sp_album = await favs.service_play("audio/2/serviceplay/spotify/mass_library/library://album/26/noshuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
-            self.assertEqual(played_items[-1], (2, "library://album/26"))
+            self.assertEqual(played_items[-1], (2, "library://album/26", None, False))
             self.assertEqual(res_sp_album.payload, "ok")
 
             res_sp_pl = await favs.service_play("audio/1/serviceplay/spotify/mass_library/library://playlist/5/shuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
-            self.assertEqual(played_items[-1], (1, "library://playlist/5"))
+            self.assertEqual(played_items[-1], (1, "library://playlist/5", None, True))
             self.assertEqual(res_sp_pl.payload, "ok")
 
+            res_sp_track = await favs.service_play("audio/1/serviceplay/spotify/mass_library/library://track/2480/parentpath/library://album/13/8/noshuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
+            self.assertEqual(played_items[-1], (1, "library://track/2480", "library://album/13", False))
+            self.assertEqual(res_sp_track.payload, "ok")
+
             # 11. Test extract_service_play_media helper directly
-            zid, med, shuf = extract_service_play_media("audio/2/serviceplay/radio/nouser/http://stream.srg-ssr.ch/m/srf3/mp3_128/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
+            zid, med, parent, shuf = extract_service_play_media("audio/2/serviceplay/radio/nouser/http://stream.srg-ssr.ch/m/srf3/mp3_128/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
             self.assertEqual(zid, 2)
             self.assertEqual(med, "http://stream.srg-ssr.ch/m/srf3/mp3_128")
+            self.assertIsNone(parent)
             self.assertIsNone(shuf)
 
-            zid, med, shuf = extract_service_play_media("audio/1/serviceplay/spotify/mass_library/library://album/26/noshuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
+            zid, med, parent, shuf = extract_service_play_media("audio/1/serviceplay/spotify/mass_library/library://album/26/noshuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
             self.assertEqual(zid, 1)
             self.assertEqual(med, "library://album/26")
+            self.assertIsNone(parent)
             self.assertFalse(shuf)
 
-            zid, med, shuf = extract_service_play_media("audio/1/serviceplay/spotify/mass_library/library://playlist/5/shuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
+            zid, med, parent, shuf = extract_service_play_media("audio/1/serviceplay/spotify/mass_library/library://playlist/5/shuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
             self.assertEqual(zid, 1)
             self.assertEqual(med, "library://playlist/5")
+            self.assertIsNone(parent)
             self.assertTrue(shuf)
+
+            zid, med, parent, shuf = extract_service_play_media("audio/1/serviceplay/spotify/mass_library/library://track/2480/parentpath/library://album/13/8/noshuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
+            self.assertEqual(zid, 1)
+            self.assertEqual(med, "library://track/2480")
+            self.assertEqual(parent, "library://album/13")
+            self.assertFalse(shuf)
 
             # 12. Global search endpoints
             gs_desc = await favs.global_search_describe("audio/cfg/globalsearch/describe")

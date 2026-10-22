@@ -190,14 +190,26 @@ class LoxoneMusicServerPlugin(PluginProvider):
             pid = self.zone_to_player.get(zid)
             if not pid or not hasattr(self.mass, "players"):
                 return
-            if action == "play":
-                await self.mass.players.cmd_play(pid)
+            if action in ("play", "resume"):
+                if hasattr(self.mass, "players"):
+                    await self.mass.players.cmd_power(pid, True)
+                    await self.mass.players.cmd_play(pid)
+            elif action == "power_on":
+                if hasattr(self.mass, "players"):
+                    await self.mass.players.cmd_power(pid, True)
             elif action == "pause":
-                await self.mass.players.cmd_pause(pid)
+                if hasattr(self.mass, "players"):
+                    await self.mass.players.cmd_pause(pid)
             elif action == "stop":
-                await self.mass.players.cmd_stop(pid)
+                if hasattr(self.mass, "players"):
+                    await self.mass.players.cmd_stop(pid)
             elif action == "volume":
-                await self.mass.players.cmd_volume_set(pid, int(param))
+                if hasattr(self.mass, "players"):
+                    await self.mass.players.cmd_volume_set(pid, int(param))
+            elif action in ("queueplus", "next") and hasattr(self.mass, "player_queues"):
+                await self.mass.player_queues.cmd_next(pid)
+            elif action in ("queueminus", "previous") and hasattr(self.mass, "player_queues"):
+                await self.mass.player_queues.cmd_previous(pid)
 
         zone = ZoneHandlers(lambda zid: self.zone_states.get(zid), send_cmd)
 
@@ -336,7 +348,12 @@ class LoxoneMusicServerPlugin(PluginProvider):
                     LOGGER.debug("Error getting artists: %s", exc)
             return artists
 
-        async def play_media(zid: int, media: str) -> None:
+        async def play_media(
+            zid: int,
+            media: str,
+            parent: Optional[str] = None,
+            shuffle: Optional[bool] = None,
+        ) -> None:
             pid = self.zone_to_player.get(zid)
             if not pid or not hasattr(self.mass, "player_queues"):
                 return
@@ -355,10 +372,59 @@ class LoxoneMusicServerPlugin(PluginProvider):
                 if target_media == station["id"] or target_media == f"radio:{station['id']}":
                     target_media = station["audiopath"]
                     break
+
+            target_parent = parent
+            if target_parent:
+                if target_parent.startswith("album:"):
+                    target_parent = f"library://album/{target_parent.split(':', 1)[1]}"
+                elif target_parent.startswith("playlist:"):
+                    target_parent = f"library://playlist/{target_parent.split(':', 1)[1]}"
+                elif target_parent.startswith("artist:"):
+                    target_parent = f"library://artist/{target_parent.split(':', 1)[1]}"
+
             try:
                 if hasattr(self.mass, "players"):
-                    await self.mass.players.cmd_power(pid, True)
-                await self.mass.player_queues.play_media(pid, target_media)
+                    try:
+                        await self.mass.players.cmd_power(pid, True)
+                    except Exception as p_err:
+                        LOGGER.debug("cmd_power failed: %s", p_err)
+
+                kwargs: Dict[str, Any] = {}
+                if shuffle is not None:
+                    kwargs["shuffle"] = shuffle
+
+                played = False
+                if target_parent:
+                    try:
+                        LOGGER.info(
+                            "Attempting play_media on queue %s with parent %s and start_item %s",
+                            pid,
+                            target_parent,
+                            target_media,
+                        )
+                        await self.mass.player_queues.play_media(
+                            pid,
+                            media=target_parent,
+                            start_item=target_media,
+                            **kwargs,
+                        )
+                        played = True
+                    except Exception as parent_exc:
+                        LOGGER.warning(
+                            "Could not play parent %s with start_item %s: %s; falling back to direct media",
+                            target_parent,
+                            target_media,
+                            parent_exc,
+                        )
+
+                if not played:
+                    LOGGER.info("Attempting play_media on queue %s with media %s", pid, target_media)
+                    await self.mass.player_queues.play_media(
+                        pid,
+                        media=target_media,
+                        **kwargs,
+                    )
+
                 if zid in self.zone_states:
                     self.zone_states[zid].power = "on"
                     self.zone_states[zid].mode = "play"
