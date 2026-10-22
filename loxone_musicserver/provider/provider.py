@@ -176,12 +176,54 @@ class LoxoneMusicServerPlugin(PluginProvider):
                 if self.notifier:
                     self.notifier.notify_zone_state_changed(self.zone_states[zone_id])
 
+        def get_extra_diagnostics() -> Dict[str, Any]:
+            players_info = []
+            if hasattr(self.mass, "players"):
+                try:
+                    for p in self.mass.players:
+                        players_info.append({
+                            "player_id": getattr(p, "player_id", None),
+                            "name": getattr(p, "display_name", None) or getattr(p, "name", None),
+                            "provider": getattr(p, "provider", None),
+                            "type": str(getattr(p, "type", None)),
+                            "available": getattr(p, "available", None),
+                            "powered": getattr(p, "powered", None),
+                            "playback_state": str(getattr(p, "playback_state", None)),
+                            "volume": getattr(p, "volume_level", None),
+                        })
+                except Exception as e:
+                    players_info.append({"error": str(e)})
+
+            queues_info = []
+            if hasattr(self.mass, "player_queues"):
+                try:
+                    for q in self.mass.player_queues:
+                        queues_info.append({
+                            "queue_id": getattr(q, "queue_id", None),
+                            "display_name": getattr(q, "display_name", None),
+                            "active": getattr(q, "active", None),
+                            "state": str(getattr(q, "state", None)),
+                            "current_index": getattr(q, "current_index", None),
+                        })
+                except Exception as e:
+                    queues_info.append({"error": str(e)})
+
+            return {
+                "zone_to_player": dict(self.zone_to_player),
+                "player_to_zone": dict(self.player_to_zone),
+                "ma_players": players_info,
+                "ma_queues": queues_info,
+                "last_play_attempt": getattr(self, "last_play_attempt", None),
+                "last_play_error": getattr(self, "last_play_error", None),
+            }
+
         cfg = ConfigHandlers(
             self.server_config,
             self.crypto,
             self._apply_loxone_config,
             notifier=self.notifier,
             on_player_name_updated=on_player_name_updated,
+            get_extra_diagnostics=get_extra_diagnostics,
         )
         self.cfg = cfg
 
@@ -356,7 +398,14 @@ class LoxoneMusicServerPlugin(PluginProvider):
         ) -> None:
             pid = self.zone_to_player.get(zid)
             if not pid or not hasattr(self.mass, "player_queues"):
+                LOGGER.warning("play_media: zone %d has no mapped player or no player_queues", zid)
+                self.last_play_error = {
+                    "time": int(time.time()),
+                    "zid": zid,
+                    "error": f"Zone {zid} has no mapped player or no player_queues",
+                }
                 return
+
             target_media = media
             if target_media.startswith("folder:"):
                 return
@@ -368,9 +417,16 @@ class LoxoneMusicServerPlugin(PluginProvider):
                 target_media = f"library://album/{target_media.split(':', 1)[1]}"
             elif target_media.startswith("artist:"):
                 target_media = f"library://artist/{target_media.split(':', 1)[1]}"
+
+            station_info = None
             for station in DEFAULT_RADIO_STATIONS:
-                if target_media == station["id"] or target_media == f"radio:{station['id']}":
+                if (
+                    target_media == station["id"]
+                    or target_media == f"radio:{station['id']}"
+                    or target_media == station["audiopath"]
+                ):
                     target_media = station["audiopath"]
+                    station_info = station
                     break
 
             target_parent = parent
@@ -382,12 +438,48 @@ class LoxoneMusicServerPlugin(PluginProvider):
                 elif target_parent.startswith("artist:"):
                     target_parent = f"library://artist/{target_parent.split(':', 1)[1]}"
 
+            # An artist should NEVER be passed as parent container because MA doesn't support start_item on artist
+            if target_parent and (target_parent.startswith("library://artist/") or target_parent.startswith("artist:")):
+                LOGGER.debug("Ignoring artist parent %s for track %s", target_parent, target_media)
+                target_parent = None
+
+            self.last_play_attempt = {
+                "time": int(time.time()),
+                "zid": zid,
+                "pid": pid,
+                "media": target_media,
+                "parent": target_parent,
+                "shuffle": shuffle,
+            }
+
             try:
+                # 1. Power on & unmute player
                 if hasattr(self.mass, "players"):
                     try:
                         await self.mass.players.cmd_power(pid, True)
                     except Exception as p_err:
                         LOGGER.debug("cmd_power failed: %s", p_err)
+                    try:
+                        await self.mass.players.cmd_volume_mute(pid, False)
+                    except Exception:
+                        pass
+
+                # 2. Update zone state immediately for responsive UI
+                if zid in self.zone_states:
+                    state = self.zone_states[zid]
+                    state.power = "on"
+                    state.mode = "play"
+                    state.audiopath = target_media
+                    if station_info:
+                        state.station = station_info["name"]
+                        state.title = station_info["name"]
+                        state.artist = "Radio"
+                        state.album = ""
+                        state.coverurl = station_info.get("cover", "")
+                        state.audiotype = 2
+                        state.type = 2
+                    if self.notifier:
+                        self.notifier.notify_zone_state_changed(state)
 
                 kwargs: Dict[str, Any] = {}
                 if shuffle is not None:
@@ -397,7 +489,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
                 if target_parent:
                     try:
                         LOGGER.info(
-                            "Attempting play_media on queue %s with parent %s and start_item %s",
+                            "Attempting play_media on queue %s with parent %s and start_item %s (option=replace)",
                             pid,
                             target_parent,
                             target_media,
@@ -406,6 +498,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
                             pid,
                             media=target_parent,
                             start_item=target_media,
+                            option="replace",
                             **kwargs,
                         )
                         played = True
@@ -418,21 +511,31 @@ class LoxoneMusicServerPlugin(PluginProvider):
                         )
 
                 if not played:
-                    LOGGER.info("Attempting play_media on queue %s with media %s", pid, target_media)
+                    LOGGER.info(
+                        "Attempting play_media on queue %s with media %s (option=replace)",
+                        pid,
+                        target_media,
+                    )
                     await self.mass.player_queues.play_media(
                         pid,
                         media=target_media,
+                        option="replace",
                         **kwargs,
                     )
 
-                if zid in self.zone_states:
-                    self.zone_states[zid].power = "on"
-                    self.zone_states[zid].mode = "play"
-                    self.zone_states[zid].audiopath = target_media
-                    if self.notifier:
-                        self.notifier.notify_zone_state_changed(self.zone_states[zid])
+                self.last_play_error = None
             except Exception as exc:
-                LOGGER.error("Failed to play media %s on zone %d: %s", target_media, zid, exc)
+                import traceback
+                tb = traceback.format_exc()
+                LOGGER.error("Failed to play media %s on zone %d: %s\n%s", target_media, zid, exc, tb)
+                self.last_play_error = {
+                    "time": int(time.time()),
+                    "zid": zid,
+                    "pid": pid,
+                    "media": target_media,
+                    "error": str(exc),
+                    "traceback": tb,
+                }
 
         def _format_track_item(t: Any, fallback_id: Any = "1") -> Dict[str, Any]:
             tid = str(getattr(t, "item_id", None) or fallback_id)
@@ -466,6 +569,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
                 "album": album_name,
                 "duration": int(getattr(t, "duration", 0) or 0),
                 "audiopath": uri,
+                "cover": img_path,
                 "coverurl": img_path,
                 "thumbnail": img_path,
                 "tag": "track",

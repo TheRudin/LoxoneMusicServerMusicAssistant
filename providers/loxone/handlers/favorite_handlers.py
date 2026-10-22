@@ -12,62 +12,64 @@ from ..responses import CommandResult, build_empty_response, build_response
 
 logger = logging.getLogger("loxone.handlers.favorites")
 
+GITHUB_ASSETS_BASE = "https://raw.githubusercontent.com/TheRudin/LoxoneMusicServerMusicAssistant/main/assets"
+
 DEFAULT_RADIO_STATIONS: List[Dict[str, Any]] = [
     {
         "id": "srf3",
         "name": "Radio SRF 3",
         "station": "Radio SRF 3",
         "audiopath": "http://stream.srg-ssr.ch/m/srf3/mp3_128",
-        "cover": "https://raw.githubusercontent.com/TheRudin/LoxoneMusicServerMusicAssistant/main/assets/srf3.png",
+        "cover": f"{GITHUB_ASSETS_BASE}/srf3.png",
     },
     {
         "id": "swisspop",
         "name": "Radio Swiss Pop",
         "station": "Radio Swiss Pop",
         "audiopath": "http://stream.srg-ssr.ch/m/rsp/mp3_128",
-        "cover": "https://raw.githubusercontent.com/TheRudin/LoxoneMusicServerMusicAssistant/main/assets/swisspop.png",
+        "cover": f"{GITHUB_ASSETS_BASE}/swisspop.png",
     },
     {
         "id": "srf1",
         "name": "Radio SRF 1",
         "station": "Radio SRF 1",
         "audiopath": "http://stream.srg-ssr.ch/m/srf1/mp3_128",
-        "cover": "https://raw.githubusercontent.com/TheRudin/LoxoneMusicServerMusicAssistant/main/assets/srf1.png",
+        "cover": f"{GITHUB_ASSETS_BASE}/srf1.png",
     },
     {
         "id": "energy_basel",
         "name": "Energy Basel",
         "station": "Energy Basel",
         "audiopath": "http://energybasel.ice.infomaniak.ch/energybasel-high.mp3",
-        "cover": "",
+        "cover": f"{GITHUB_ASSETS_BASE}/energy_basel.png",
     },
     {
         "id": "energy_zuerich",
         "name": "Energy Zürich",
         "station": "Energy Zürich",
         "audiopath": "http://energyzuerich.ice.infomaniak.ch/energyzuerich-high.mp3",
-        "cover": "",
+        "cover": f"{GITHUB_ASSETS_BASE}/energy_zuerich.png",
     },
     {
         "id": "1live",
         "name": "1LIVE",
         "station": "1LIVE",
         "audiopath": "http://wdr-1live-live.icecast.wdr.de/wdr/1live/live/mp3/128/stream.mp3",
-        "cover": "",
+        "cover": f"{GITHUB_ASSETS_BASE}/1live.png",
     },
     {
         "id": "swr3",
         "name": "SWR3",
         "station": "SWR3",
         "audiopath": "http://liveradio.swr.de/sw282p3/swr3/mp3/128/stream.mp3",
-        "cover": "",
+        "cover": f"{GITHUB_ASSETS_BASE}/swr3.png",
     },
     {
         "id": "bayern3",
         "name": "Bayern 3",
         "station": "Bayern 3",
         "audiopath": "http://dispatcher.rndfnk.com/br/br3/live/mp3/mid",
-        "cover": "",
+        "cover": f"{GITHUB_ASSETS_BASE}/bayern3.png",
     },
 ]
 
@@ -123,7 +125,16 @@ def extract_service_play_media(command: str) -> tuple[int, str, Optional[str], O
             return f"{proto}://{path.lstrip('/')}"
         return decoded
 
-    return zone_id, clean_uri(raw_media) or "", clean_uri(parent_media), shuffle
+    cleaned_parent = clean_uri(parent_media)
+    # Music Assistant does not support start_item on an artist; play track directly
+    if cleaned_parent and (
+        cleaned_parent.startswith("library://artist/")
+        or cleaned_parent.startswith("artist:")
+        or cleaned_parent.startswith("artist/")
+    ):
+        cleaned_parent = None
+
+    return zone_id, clean_uri(raw_media) or "", cleaned_parent, shuffle
 
 
 class FavoriteHandlers:
@@ -377,28 +388,17 @@ class FavoriteHandlers:
             raw_radios = await self._get_radios()
             if not raw_radios:
                 raw_radios = list(DEFAULT_RADIO_STATIONS)
-                try:
-                    pls = await self._get_playlists(50, 0)
-                    for p in pls:
-                        pname = p.get("name", "")
-                        if "radio" in pname.lower():
-                            raw_radios.append({
-                                "id": str(p.get("id") or p.get("item_id")),
-                                "name": pname,
-                                "station": pname,
-                                "audiopath": p.get("audiopath", f"playlist:{p.get('id', '')}"),
-                                "cover": p.get("cover", ""),
-                            })
-                except Exception:
-                    pass
 
             for r in raw_radios:
+                cov = r.get("cover") or r.get("coverurl") or ""
                 items.append({
                     "id": str(r.get("id") or r.get("item_id", len(items) + 1)),
                     "name": r.get("name", "Radio"),
                     "station": r.get("station") or r.get("name", "Radio"),
                     "audiopath": r.get("audiopath", f"radio:{r.get('id', '')}"),
-                    "coverurl": r.get("cover", ""),
+                    "cover": cov,
+                    "coverurl": cov,
+                    "thumbnail": cov,
                     "type": 2,
                 })
         else:
@@ -503,18 +503,22 @@ class FavoriteHandlers:
                         "audiopath": ar.get("audiopath", f"artist:{ar.get('id', '')}"),
                         "coverurl": ar.get("cover", ""),
                     })
-            elif folder_path in ("2", "radios"):
+            elif folder_path in ("2", "radios", "folder:radios"):
                 folder_name = "Radiosender"
                 raw_radios = await self._get_radios()
                 if not raw_radios:
                     raw_radios = list(DEFAULT_RADIO_STATIONS)
+
                 for r in raw_radios:
+                    cov = r.get("cover") or r.get("coverurl") or ""
                     items.append({
                         "id": str(r.get("id") or r.get("item_id", len(items) + 1)),
                         "name": r.get("name", "Radio"),
                         "station": r.get("station") or r.get("name", "Radio"),
                         "audiopath": r.get("audiopath", f"radio:{r.get('id', '')}"),
-                        "coverurl": r.get("cover", ""),
+                        "cover": cov,
+                        "coverurl": cov,
+                        "thumbnail": cov,
                         "type": 2,
                     })
             elif folder_path in ("4", "favorites", "Lieblingssongs"):

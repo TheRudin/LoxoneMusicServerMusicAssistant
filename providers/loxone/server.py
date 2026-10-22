@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import List, Optional
 
 from aiohttp import web
@@ -61,6 +62,17 @@ class LoxoneServer:
             path = request.match_info.get("path", "")
             if not path:
                 path = request.path.lstrip("/")
+
+            if path.startswith("assets/"):
+                asset_filename = os.path.basename(path)
+                candidates = [
+                    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", asset_filename),
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", asset_filename),
+                    os.path.join(os.getcwd(), "assets", asset_filename),
+                ]
+                for cp in candidates:
+                    if os.path.isfile(cp):
+                        return web.FileResponse(cp, headers={"Access-Control-Allow-Origin": "*"})
 
             logger.debug("[%s] HTTP %s /%s", server_name, request.method, path)
             if not path.startswith("audio/cfg/diagnosis"):

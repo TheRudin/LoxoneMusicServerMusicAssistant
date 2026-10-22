@@ -32,12 +32,14 @@ class ConfigHandlers:
         on_config_updated: Optional[Callable[[Dict[str, Any]], None]] = None,
         notifier: Optional[Any] = None,
         on_player_name_updated: Optional[Callable[[int, str], None]] = None,
+        get_extra_diagnostics: Optional[Callable[[], Any]] = None,
     ) -> None:
         self.config = config
         self.crypto = crypto
         self.on_config_updated = on_config_updated
         self.notifier = notifier
         self.on_player_name_updated = on_player_name_updated
+        self.get_extra_diagnostics = get_extra_diagnostics
         self.current_crc32: Optional[str] = None
         self.extensions: List[Any] = []
         self.raw_config: Dict[str, Any] = {}
@@ -326,25 +328,32 @@ class ConfigHandlers:
         """Returns diagnostics data."""
         ws_info = self.notifier.get_connection_info() if self.notifier else []
         recent_cmds = self.notifier.get_recent_commands() if self.notifier else []
-        return build_response(
-            command,
-            "diagnosis",
-            {
-                "server": self.config.server_name,
-                "version": self.config.firmware_version,
-                "mac": self.config.formatted_mac,
-                "clean_mac": self.config.clean_mac,
-                "uptime": int(time.time()),
-                "paired": bool(self.config.master_serial),
-                "master_serial": self.config.clean_master_serial,
-                "miniserver_ip": self.config.miniserver_ip,
-                "uuid": self.config.uuid,
-                "last_startup_ping": self.config.last_startup_ping,
-                "ws_connections_count": len(ws_info),
-                "ws_connections": ws_info,
-                "recent_commands": recent_cmds,
-            },
-        )
+        diag_data: Dict[str, Any] = {
+            "server": self.config.server_name,
+            "version": self.config.firmware_version,
+            "mac": self.config.formatted_mac,
+            "clean_mac": self.config.clean_mac,
+            "uptime": int(time.time()),
+            "paired": bool(self.config.master_serial),
+            "master_serial": self.config.clean_master_serial,
+            "miniserver_ip": self.config.miniserver_ip,
+            "uuid": self.config.uuid,
+            "last_startup_ping": self.config.last_startup_ping,
+            "ws_connections_count": len(ws_info),
+            "ws_connections": ws_info,
+            "recent_commands": recent_cmds,
+        }
+        if self.get_extra_diagnostics:
+            try:
+                extra = self.get_extra_diagnostics()
+                if asyncio.iscoroutine(extra):
+                    extra = await extra
+                if isinstance(extra, dict):
+                    diag_data.update(extra)
+            except Exception as exc:
+                diag_data["extra_diag_error"] = str(exc)
+
+        return build_response(command, "diagnosis", diag_data)
 
     async def restart(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         """Handles restart command from Miniserver."""

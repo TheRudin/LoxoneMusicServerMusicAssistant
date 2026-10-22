@@ -5,7 +5,11 @@ import unittest
 from loxone_musicserver.config import ServerConfig
 from loxone_musicserver.loxone.crypto import LoxoneCrypto
 from loxone_musicserver.loxone.handlers.config_handlers import ConfigHandlers
-from loxone_musicserver.loxone.handlers.favorite_handlers import FavoriteHandlers, extract_service_play_media
+from loxone_musicserver.loxone.handlers.favorite_handlers import (
+    DEFAULT_RADIO_STATIONS,
+    FavoriteHandlers,
+    extract_service_play_media,
+)
 from loxone_musicserver.loxone.handlers.secure_handlers import SecureHandlers
 from loxone_musicserver.loxone.handlers.zone_handlers import ZoneHandlers
 from loxone_musicserver.loxone.responses import serialize_result
@@ -161,11 +165,14 @@ class TestHandlers(unittest.TestCase):
             self.assertEqual(self.config.server_name, "Audioserver 101")
 
             # Verify diagnosis returns enriched info
+            self.cfg.get_extra_diagnostics = lambda: {"zone_to_player": {1: "player_abc"}, "last_play_attempt": {"media": "test"}}
             diag = await self.cfg.diagnosis("audio/cfg/diagnosis")
             self.assertEqual(diag.payload["uuid"], "14f3b890-023a-11ee-be56-0242ac120002")
             self.assertEqual(diag.payload["miniserver_ip"], "192.168.1.107")
             self.assertEqual(diag.payload["master_serial"], "504F94D01A6D")
             self.assertTrue(diag.payload["paired"])
+            self.assertEqual(diag.payload["zone_to_player"], {1: "player_abc"})
+            self.assertEqual(diag.payload["last_play_attempt"], {"media": "test"})
 
             # Test trigger_startup returns status dictionary
             startup_res = await self.cfg.trigger_startup("audio/cfg/trigger_startup")
@@ -461,6 +468,19 @@ class TestHandlers(unittest.TestCase):
             self.assertEqual(med, "library://track/2480")
             self.assertEqual(parent, "library://album/13")
             self.assertFalse(shuf)
+
+            # Test artist parent is ignored/stripped to None so track plays directly
+            zid, med, parent, shuf = extract_service_play_media("audio/1/serviceplay/spotify/mass_library/library://track/9/parentpath/library://artist/5/0/noshuffle/?q&ZW5mb3JjZVVzZXI9dHJ1ZQ")
+            self.assertEqual(zid, 1)
+            self.assertEqual(med, "library://track/9")
+            self.assertIsNone(parent)
+            self.assertFalse(shuf)
+
+            # Test DEFAULT_RADIO_STATIONS have non-empty cover and valid audiopath
+            self.assertGreater(len(DEFAULT_RADIO_STATIONS), 5)
+            for st in DEFAULT_RADIO_STATIONS:
+                self.assertTrue(st["cover"].startswith("https://") or st["cover"].startswith("http://"))
+                self.assertTrue(st["audiopath"].startswith("http://") or st["audiopath"].startswith("https://"))
 
             # 12. Global search endpoints
             gs_desc = await favs.global_search_describe("audio/cfg/globalsearch/describe")
