@@ -267,8 +267,8 @@ class TestHandlers(unittest.TestCase):
                 self.assertIn("cmd", r)
                 self.assertIn("root", r)
 
-            # 4. Verify get_service_folder for radio (local and custom folders)
-            res_radio_local = await favs.get_service_folder("audio/cfg/getservicefolder/radio/nouser/local/0/20")
+            # 4. Verify get_service_folder for radio (local, custom, and legacy folders)
+            res_radio_local = await favs.get_service_folder("audio/cfg/getservicefolder/local/local/local/0/20")
             self.assertEqual(res_radio_local.name, "getservicefolder")
             self.assertEqual(len(res_radio_local.payload), 1)
             folder_local = res_radio_local.payload[0]
@@ -278,7 +278,7 @@ class TestHandlers(unittest.TestCase):
             self.assertEqual(folder_local["items"][0]["audiopath"], "library://radio/1")
             self.assertEqual(folder_local["items"][0]["type"], 2)
 
-            res_radio_custom = await favs.get_service_folder("audio/cfg/getservicefolder/radio/nouser/custom/0/20")
+            res_radio_custom = await favs.get_service_folder("audio/cfg/getservicefolder/custom/custom/custom/0/20")
             self.assertEqual(res_radio_custom.payload[0]["name"], "Meine Sender")
             self.assertEqual(len(res_radio_custom.payload[0]["items"]), 1)
 
@@ -293,38 +293,65 @@ class TestHandlers(unittest.TestCase):
             self.assertEqual(folder_data["items"][0]["audiopath"], "library://radio/1")
             self.assertEqual(folder_data["items"][0]["type"], 2)
 
-            # 6. Verify get_service_folder for spotify root
+            # 6. Verify get_service_folder for spotify root (7 elements matching MediaEnum.Spotify.TYPES)
             res_mass_root = await favs.get_service_folder("audio/cfg/getservicefolder/spotify/mass_library/root/0/50")
             root_items = res_mass_root.payload[0]["items"]
-            self.assertEqual(len(root_items), 5)
+            self.assertEqual(len(root_items), 7)
             ids = [it["id"] for it in root_items]
+            self.assertIn("0", ids)  # Highlights
+            self.assertIn("1", ids)  # New Releases
             self.assertIn("2", ids)  # Radios
             self.assertIn("3", ids)  # Playlists
             self.assertIn("4", ids)  # Liked Songs
             self.assertIn("5", ids)  # Albums
             self.assertIn("6", ids)  # Artists
+            for it in root_items:
+                self.assertIn("tag", it)
 
-            # 5. Verify get_service_folder sub-folders
+            # 7. Verify get_service_folder sub-folders
             res_playlists = await favs.get_service_folder("audio/cfg/getservicefolder/spotify/mass_library/3/0/50")
             self.assertEqual(res_playlists.payload[0]["items"][0]["name"], "Best of Rock")
             self.assertEqual(res_playlists.payload[0]["items"][0]["audiopath"], "library://playlist/10")
+            self.assertEqual(res_playlists.payload[0]["items"][0]["tag"], "playlist")
 
             res_albums = await favs.get_service_folder("audio/cfg/getservicefolder/spotify/mass_library/5/0/50")
             self.assertEqual(res_albums.payload[0]["items"][0]["name"], "Abbey Road")
             self.assertEqual(res_albums.payload[0]["items"][0]["audiopath"], "library://album/100")
+            self.assertEqual(res_albums.payload[0]["items"][0]["tag"], "album")
 
             res_artists = await favs.get_service_folder("audio/cfg/getservicefolder/spotify/mass_library/6/0/50")
             self.assertEqual(res_artists.payload[0]["items"][0]["name"], "Queen")
             self.assertEqual(res_artists.payload[0]["items"][0]["audiopath"], "library://artist/200")
+            self.assertEqual(res_artists.payload[0]["items"][0]["tag"], "artist")
 
-            # 6. Verify serviceplay handles loxoneradio and spotify URLs
-            await favs.service_play("audio/1/serviceplay/loxoneradio/noUser/library%3A%2F%2Fradio%2F1")
+            # 8. Verify radio fallback when get_radios returns empty list
+            async def get_empty_radios():
+                return []
+
+            favs_empty_radios = FavoriteHandlers(
+                get_favs,
+                play_fav,
+                cycle_fav,
+                get_empty_radios,
+                get_playlists,
+                play_media,
+            )
+            res_fallback = await favs_empty_radios.get_service_folder("audio/cfg/getservicefolder/local/local/local/0/20")
+            fallback_items = res_fallback.payload[0]["items"]
+            self.assertGreater(len(fallback_items), 0)
+            self.assertEqual(fallback_items[0]["name"], "Radio SRF 3")
+            self.assertEqual(fallback_items[0]["type"], 2)
+
+            # 9. Verify serviceplay handles loxoneradio and spotify URLs and returns ok
+            res_sp1 = await favs.service_play("audio/1/serviceplay/loxoneradio/noUser/library%3A%2F%2Fradio%2F1")
             self.assertEqual(played_items[-1], (1, "library://radio/1"))
+            self.assertEqual(res_sp1.payload, "ok")
 
-            await favs.service_play("audio/2/serviceplay/spotify/mass_library/library%3A%2F%2Fplaylist%2F10")
+            res_sp2 = await favs.service_play("audio/2/serviceplay/spotify/mass_library/library%3A%2F%2Fplaylist%2F10")
             self.assertEqual(played_items[-1], (2, "library://playlist/10"))
+            self.assertEqual(res_sp2.payload, "ok")
 
-            # 7. Global search endpoints
+            # 10. Global search endpoints
             gs_desc = await favs.global_search_describe("audio/cfg/globalsearch/describe")
             self.assertEqual(gs_desc.name, "globalsearch")
             self.assertIn("spotify", gs_desc.payload)

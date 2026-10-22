@@ -319,6 +319,8 @@ class LoxoneMusicServerPlugin(PluginProvider):
             if not pid or not hasattr(self.mass, "player_queues"):
                 return
             target_media = media
+            if target_media.startswith("folder:"):
+                return
             if target_media.startswith("radio:"):
                 target_media = f"library://radio/{target_media.split(':', 1)[1]}"
             elif target_media.startswith("playlist:"):
@@ -332,6 +334,41 @@ class LoxoneMusicServerPlugin(PluginProvider):
             except Exception as exc:
                 LOGGER.error("Failed to play media %s on zone %d: %s", target_media, zid, exc)
 
+        async def get_playlist_tracks(playlist_id: str) -> List[Dict[str, Any]]:
+            tracks: List[Dict[str, Any]] = []
+            if hasattr(self.mass, "music") and hasattr(self.mass.music, "playlists"):
+                try:
+                    items = []
+                    if hasattr(self.mass.music.playlists, "tracks"):
+                        res = self.mass.music.playlists.tracks(playlist_id, "library")
+                        if asyncio.iscoroutine(res):
+                            items = await res
+                        elif hasattr(res, "__aiter__"):
+                            items = [it async for it in res]
+                        elif isinstance(res, (list, tuple)):
+                            items = list(res)
+                    for t in items:
+                        tid = str(getattr(t, "item_id", len(tracks) + 1))
+                        artist_name = getattr(getattr(t, "artist", None), "name", "") or str(getattr(t, "artist", "") or "")
+                        album_name = getattr(getattr(t, "album", None), "name", "") or str(getattr(t, "album", "") or "")
+                        img_path = getattr(getattr(t, "image", None), "path", "") or ""
+                        tracks.append({
+                            "id": tid,
+                            "name": getattr(t, "name", "Track"),
+                            "title": getattr(t, "name", "Track"),
+                            "artist": artist_name,
+                            "album": album_name,
+                            "duration": int(getattr(t, "duration", 0) or 0),
+                            "audiopath": getattr(t, "uri", None) or f"library://track/{tid}",
+                            "coverurl": img_path,
+                            "thumbnail": img_path,
+                            "tag": "track",
+                            "type": 2,
+                        })
+                except Exception as exc:
+                    LOGGER.debug("Error getting playlist tracks: %s", exc)
+            return tracks
+
         favs = FavoriteHandlers(
             get_favs,
             play_fav,
@@ -341,6 +378,7 @@ class LoxoneMusicServerPlugin(PluginProvider):
             play_media,
             get_albums=get_albums,
             get_artists=get_artists,
+            get_playlist_tracks=get_playlist_tracks,
         )
 
         # Alerts & TTS

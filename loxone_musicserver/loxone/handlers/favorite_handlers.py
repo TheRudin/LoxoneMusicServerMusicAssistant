@@ -12,6 +12,65 @@ from ..responses import CommandResult, build_empty_response, build_response
 
 logger = logging.getLogger("loxone.handlers.favorites")
 
+DEFAULT_RADIO_STATIONS: List[Dict[str, Any]] = [
+    {
+        "id": "srf3",
+        "name": "Radio SRF 3",
+        "station": "Radio SRF 3",
+        "audiopath": "http://stream.srg-ssr.ch/m/srf3/mp3_128",
+        "cover": "https://raw.githubusercontent.com/TheRudin/LoxoneMusicServerMusicAssistant/main/assets/srf3.png",
+    },
+    {
+        "id": "swisspop",
+        "name": "Radio Swiss Pop",
+        "station": "Radio Swiss Pop",
+        "audiopath": "http://stream.srg-ssr.ch/m/rsp/mp3_128",
+        "cover": "https://raw.githubusercontent.com/TheRudin/LoxoneMusicServerMusicAssistant/main/assets/swisspop.png",
+    },
+    {
+        "id": "srf1",
+        "name": "Radio SRF 1",
+        "station": "Radio SRF 1",
+        "audiopath": "http://stream.srg-ssr.ch/m/srf1/mp3_128",
+        "cover": "https://raw.githubusercontent.com/TheRudin/LoxoneMusicServerMusicAssistant/main/assets/srf1.png",
+    },
+    {
+        "id": "energy_basel",
+        "name": "Energy Basel",
+        "station": "Energy Basel",
+        "audiopath": "http://energybasel.ice.infomaniak.ch/energybasel-high.mp3",
+        "cover": "",
+    },
+    {
+        "id": "energy_zuerich",
+        "name": "Energy Zürich",
+        "station": "Energy Zürich",
+        "audiopath": "http://energyzuerich.ice.infomaniak.ch/energyzuerich-high.mp3",
+        "cover": "",
+    },
+    {
+        "id": "1live",
+        "name": "1LIVE",
+        "station": "1LIVE",
+        "audiopath": "http://wdr-1live-live.icecast.wdr.de/wdr/1live/live/mp3/128/stream.mp3",
+        "cover": "",
+    },
+    {
+        "id": "swr3",
+        "name": "SWR3",
+        "station": "SWR3",
+        "audiopath": "http://liveradio.swr.de/sw282p3/swr3/mp3/128/stream.mp3",
+        "cover": "",
+    },
+    {
+        "id": "bayern3",
+        "name": "Bayern 3",
+        "station": "Bayern 3",
+        "audiopath": "http://dispatcher.rndfnk.com/br/br3/live/mp3/mid",
+        "cover": "",
+    },
+]
+
 
 class FavoriteHandlers:
     """Handles room favorites, radio streams, playlists, and direct service playback."""
@@ -26,6 +85,7 @@ class FavoriteHandlers:
         play_media: Callable[[int, str], Awaitable[None]],
         get_albums: Optional[Callable[[int, int], Awaitable[List[Dict[str, Any]]]]] = None,
         get_artists: Optional[Callable[[int, int], Awaitable[List[Dict[str, Any]]]]] = None,
+        get_playlist_tracks: Optional[Callable[[str], Awaitable[List[Dict[str, Any]]]]] = None,
     ) -> None:
         self.get_favorites = get_favorites
         self.play_favorite = play_favorite
@@ -35,6 +95,7 @@ class FavoriteHandlers:
         self.play_media = play_media
         self._get_albums = get_albums
         self._get_artists = get_artists
+        self._get_playlist_tracks = get_playlist_tracks
 
     async def get_room_favs(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         """Returns room favorites for a zone."""
@@ -179,6 +240,7 @@ class FavoriteHandlers:
                 "totalitems": p.get("totalitems", len(raw_playlists)),
                 "cover": p.get("cover", ""),
                 "audiopath": p.get("audiopath", f"playlist:{p.get('id', '')}"),
+                "tag": "playlist",
                 "type": 7,
             })
         return build_response(command, "getplaylists2", playlists)
@@ -195,19 +257,47 @@ class FavoriteHandlers:
         items: List[Dict[str, Any]] = []
         folder_name = "Radio"
 
-        if service in ("loxoneradio", "radio", "tunein"):
-            folder_name = "Radio"
-            if folder_path == "local":
-                folder_name = "Lokale Sender"
-            elif folder_path == "custom":
-                folder_name = "Meine Sender"
-            elif folder_path == "music":
-                folder_name = "Musik"
-            elif folder_path == "world":
-                folder_name = "Länder"
+        is_radio_service = service in (
+            "local",
+            "custom",
+            "music",
+            "world",
+            "loxoneradio",
+            "radio",
+            "tunein",
+        )
 
-            radios = await self._get_radios()
-            for r in radios:
+        if is_radio_service:
+            if folder_path == "local" or service == "local":
+                folder_name = "Lokale Sender"
+            elif folder_path == "custom" or service == "custom":
+                folder_name = "Meine Sender"
+            elif folder_path == "music" or service == "music":
+                folder_name = "Musik"
+            elif folder_path == "world" or service == "world":
+                folder_name = "Länder"
+            else:
+                folder_name = "Radio"
+
+            raw_radios = await self._get_radios()
+            if not raw_radios:
+                raw_radios = list(DEFAULT_RADIO_STATIONS)
+                try:
+                    pls = await self._get_playlists(50, 0)
+                    for p in pls:
+                        pname = p.get("name", "")
+                        if "radio" in pname.lower():
+                            raw_radios.append({
+                                "id": str(p.get("id") or p.get("item_id")),
+                                "name": pname,
+                                "station": pname,
+                                "audiopath": p.get("audiopath", f"playlist:{p.get('id', '')}"),
+                                "cover": p.get("cover", ""),
+                            })
+                except Exception:
+                    pass
+
+            for r in raw_radios:
                 items.append({
                     "id": str(r.get("id") or r.get("item_id", len(items) + 1)),
                     "name": r.get("name", "Radio"),
@@ -217,38 +307,78 @@ class FavoriteHandlers:
                     "type": 2,  # FileType.File
                 })
         else:
+            # Streaming Service: Spotify / Music Assistant
             if folder_path in ("root", "start"):
                 folder_name = "Music Assistant"
+                # Loxone expects 7 entries (0..6) matching MediaEnum.Spotify.TYPES
                 items = [
-                    {"id": "2", "name": "Radiosender", "type": 7, "audiopath": "folder:radios"},
-                    {"id": "3", "name": "Playlists", "type": 7, "audiopath": "folder:playlists"},
-                    {"id": "4", "name": "Lieblingssongs", "type": 7, "audiopath": "folder:favorites"},
-                    {"id": "5", "name": "Alben", "type": 7, "audiopath": "folder:albums"},
-                    {"id": "6", "name": "Künstler", "type": 7, "audiopath": "folder:artists"},
+                    {
+                        "id": "0",
+                        "name": "Highlights",
+                        "tag": "category",
+                        "type": 1,
+                        "audiopath": "folder:playlists",
+                    },
+                    {
+                        "id": "1",
+                        "name": "Neuerscheinungen",
+                        "tag": "category",
+                        "type": 1,
+                        "audiopath": "folder:playlists",
+                    },
+                    {
+                        "id": "2",
+                        "name": "Radiosender",
+                        "tag": "category",
+                        "type": 1,
+                        "audiopath": "folder:radios",
+                    },
+                    {
+                        "id": "3",
+                        "name": "Playlists",
+                        "tag": "playlist",
+                        "type": 7,
+                        "audiopath": "folder:playlists",
+                        "coverurl": "",
+                        "totalitems": 50,
+                    },
+                    {
+                        "id": "4",
+                        "name": "Lieblingssongs",
+                        "tag": "user_collection",
+                        "type": 7,
+                        "audiopath": "folder:favorites",
+                        "coverurl": "",
+                    },
+                    {
+                        "id": "5",
+                        "name": "Alben",
+                        "tag": "album",
+                        "type": 7,
+                        "audiopath": "folder:albums",
+                        "coverurl": "",
+                    },
+                    {
+                        "id": "6",
+                        "name": "Künstler",
+                        "tag": "artist",
+                        "type": 7,
+                        "audiopath": "folder:artists",
+                        "coverurl": "",
+                    },
                 ]
-            elif folder_path in ("2", "radios", "4", "favorites"):
-                folder_name = "Radiosender" if folder_path in ("2", "radios") else "Lieblingssongs"
-                radios = await self._get_radios()
-                for r in radios:
-                    items.append({
-                        "id": str(r.get("id") or r.get("item_id", len(items) + 1)),
-                        "name": r.get("name", "Radio"),
-                        "station": r.get("station") or r.get("name", "Radio"),
-                        "audiopath": r.get("audiopath", f"radio:{r.get('id', '')}"),
-                        "coverurl": r.get("cover", ""),
-                        "type": 2,
-                    })
-            elif folder_path in ("3", "playlists"):
+            elif folder_path in ("3", "playlists", "0", "1"):
                 folder_name = "Playlists"
                 playlists = await self._get_playlists(limit, offset)
                 for p in playlists:
                     items.append({
                         "id": str(p.get("id") or p.get("item_id", len(items) + 1)),
                         "name": p.get("name", "Playlist"),
+                        "tag": "playlist",
+                        "type": 7,
                         "audiopath": p.get("audiopath", f"playlist:{p.get('id', '')}"),
                         "coverurl": p.get("cover", ""),
                         "totalitems": p.get("totalitems", 0),
-                        "type": 7,
                     })
             elif folder_path in ("5", "albums") and self._get_albums:
                 folder_name = "Alben"
@@ -258,9 +388,10 @@ class FavoriteHandlers:
                         "id": str(a.get("id") or a.get("item_id", len(items) + 1)),
                         "name": a.get("name", "Album"),
                         "artist": a.get("artist", ""),
+                        "tag": "album",
+                        "type": 7,
                         "audiopath": a.get("audiopath", f"album:{a.get('id', '')}"),
                         "coverurl": a.get("cover", ""),
-                        "type": 7,
                     })
             elif folder_path in ("6", "artists") and self._get_artists:
                 folder_name = "Künstler"
@@ -269,10 +400,36 @@ class FavoriteHandlers:
                     items.append({
                         "id": str(ar.get("id") or ar.get("item_id", len(items) + 1)),
                         "name": ar.get("name", "Künstler"),
+                        "tag": "artist",
+                        "type": 7,
                         "audiopath": ar.get("audiopath", f"artist:{ar.get('id', '')}"),
                         "coverurl": ar.get("cover", ""),
-                        "type": 7,
                     })
+            elif folder_path in ("2", "radios"):
+                folder_name = "Radiosender"
+                raw_radios = await self._get_radios()
+                if not raw_radios:
+                    raw_radios = list(DEFAULT_RADIO_STATIONS)
+                for r in raw_radios:
+                    items.append({
+                        "id": str(r.get("id") or r.get("item_id", len(items) + 1)),
+                        "name": r.get("name", "Radio"),
+                        "station": r.get("station") or r.get("name", "Radio"),
+                        "audiopath": r.get("audiopath", f"radio:{r.get('id', '')}"),
+                        "coverurl": r.get("cover", ""),
+                        "type": 2,
+                    })
+            elif folder_path in ("4", "favorites"):
+                folder_name = "Lieblingssongs"
+                if self._get_playlist_tracks:
+                    raw_tracks = await self._get_playlist_tracks("favorites")
+                    for t in raw_tracks:
+                        items.append(t)
+            elif self._get_playlist_tracks and folder_path.isdigit():
+                folder_name = f"Playlist {folder_path}"
+                raw_tracks = await self._get_playlist_tracks(folder_path)
+                for t in raw_tracks:
+                    items.append(t)
 
         paged_items = items[offset : offset + limit] if (offset > 0 or limit < len(items)) else items
         folder_payload = {
@@ -306,11 +463,11 @@ class FavoriteHandlers:
         zone_id = int(parts[idx]) if len(parts) > idx and parts[idx].isdigit() else 1
         subparts = parts[idx + 2 :]
         if not subparts:
-            return build_empty_response(command)
+            return build_response(command, "serviceplay", "ok")
 
-        if len(subparts) >= 3 and subparts[1].lower() == "nouser":
+        if len(subparts) >= 3 and subparts[1].lower() in ("nouser", "music assistant", "mass_library", "local", "custom", "music", "world"):
             media_path = "/".join(subparts[2:])
-        elif len(subparts) >= 3 and subparts[0].lower() in ("spotify", "loxoneradio", "local", "radio", "tunein"):
+        elif len(subparts) >= 3 and subparts[0].lower() in ("spotify", "loxoneradio", "local", "radio", "tunein", "custom", "music", "world"):
             media_path = "/".join(subparts[2:])
         else:
             media_path = "/".join(subparts)
@@ -318,7 +475,7 @@ class FavoriteHandlers:
         decoded_path = unquote(media_path)
         logger.info("service_play for zone %d: %s", zone_id, decoded_path)
         await self.play_media(zone_id, decoded_path)
-        return build_empty_response(command)
+        return build_response(command, "serviceplay", "ok")
 
     async def play_url(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         """Plays a raw audio URL."""
