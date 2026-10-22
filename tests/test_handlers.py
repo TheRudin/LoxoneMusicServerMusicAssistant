@@ -255,7 +255,34 @@ class TestHandlers(unittest.TestCase):
             self.assertEqual(res_services.payload[0]["id"], "mass_library")
             self.assertEqual(res_services.payload[0]["user"], "Music Assistant")
 
-            # 3. Verify get_service_folder for loxoneradio
+            # 3. Verify get_radios returns radio service catalog (local, custom, etc.) conforming to GetRadioSchema
+            res_radios = await favs.get_radios("audio/cfg/getradios")
+            self.assertEqual(res_radios.name, "getradios")
+            cmds = [r["cmd"] for r in res_radios.payload]
+            self.assertIn("local", cmds)
+            self.assertIn("custom", cmds)
+            for r in res_radios.payload:
+                self.assertIn("name", r)
+                self.assertIn("icon", r)
+                self.assertIn("cmd", r)
+                self.assertIn("root", r)
+
+            # 4. Verify get_service_folder for radio (local and custom folders)
+            res_radio_local = await favs.get_service_folder("audio/cfg/getservicefolder/radio/nouser/local/0/20")
+            self.assertEqual(res_radio_local.name, "getservicefolder")
+            self.assertEqual(len(res_radio_local.payload), 1)
+            folder_local = res_radio_local.payload[0]
+            self.assertEqual(folder_local["name"], "Lokale Sender")
+            self.assertEqual(len(folder_local["items"]), 1)
+            self.assertEqual(folder_local["items"][0]["name"], "SRF 3")
+            self.assertEqual(folder_local["items"][0]["audiopath"], "library://radio/1")
+            self.assertEqual(folder_local["items"][0]["type"], 2)
+
+            res_radio_custom = await favs.get_service_folder("audio/cfg/getservicefolder/radio/nouser/custom/0/20")
+            self.assertEqual(res_radio_custom.payload[0]["name"], "Meine Sender")
+            self.assertEqual(len(res_radio_custom.payload[0]["items"]), 1)
+
+            # 5. Verify get_service_folder for loxoneradio
             res_radio_folder = await favs.get_service_folder("audio/cfg/getservicefolder/loxoneradio/noUser/root/0/50")
             self.assertEqual(res_radio_folder.name, "getservicefolder")
             self.assertEqual(len(res_radio_folder.payload), 1)
@@ -266,13 +293,14 @@ class TestHandlers(unittest.TestCase):
             self.assertEqual(folder_data["items"][0]["audiopath"], "library://radio/1")
             self.assertEqual(folder_data["items"][0]["type"], 2)
 
-            # 4. Verify get_service_folder for spotify root
+            # 6. Verify get_service_folder for spotify root
             res_mass_root = await favs.get_service_folder("audio/cfg/getservicefolder/spotify/mass_library/root/0/50")
             root_items = res_mass_root.payload[0]["items"]
-            self.assertEqual(len(root_items), 4)
+            self.assertEqual(len(root_items), 5)
             ids = [it["id"] for it in root_items]
             self.assertIn("2", ids)  # Radios
             self.assertIn("3", ids)  # Playlists
+            self.assertIn("4", ids)  # Liked Songs
             self.assertIn("5", ids)  # Albums
             self.assertIn("6", ids)  # Artists
 

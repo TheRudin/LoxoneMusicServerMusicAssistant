@@ -82,19 +82,46 @@ class FavoriteHandlers:
         return build_empty_response(command)
 
     async def get_radios(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
-        """Returns radio stations available in Music Assistant."""
-        raw_radios = await self._get_radios()
-        radios = []
-        for r in raw_radios:
-            radios.append({
-                "id": str(r.get("id") or r.get("item_id", len(radios) + 1)),
-                "name": r.get("name", "Radio"),
-                "cover": r.get("cover", ""),
-                "station": r.get("station") or r.get("name", "Radio"),
-                "audiopath": r.get("audiopath", f"radio:{r.get('id', '')}"),
-                "type": 2,
-            })
-        return build_response(command, "getradios", radios)
+        """Returns radio service catalog conforming to Loxone GetRadioSchema."""
+        services = [
+            {
+                "name": "Lokale Sender",
+                "icon": "LocationPin",
+                "cmd": "local",
+                "root": "local",
+                "id": "local",
+                "user": "nouser",
+                "configerror": False,
+            },
+            {
+                "name": "Meine Sender",
+                "icon": "MusicFolderSong",
+                "cmd": "custom",
+                "root": "custom",
+                "id": "custom",
+                "user": "nouser",
+                "configerror": False,
+            },
+            {
+                "name": "Musik",
+                "icon": "TheaterMask",
+                "cmd": "music",
+                "root": "music",
+                "id": "music",
+                "user": "nouser",
+                "configerror": False,
+            },
+            {
+                "name": "Länder",
+                "icon": "Globe3",
+                "cmd": "world",
+                "root": "world",
+                "id": "world",
+                "user": "nouser",
+                "configerror": False,
+            },
+        ]
+        return build_response(command, "getradios", services)
 
     async def get_services(self, command: str, payload: Optional[bytes] = None, match: Optional[Match[str]] = None) -> CommandResult:
         """Returns configured streaming services."""
@@ -170,6 +197,15 @@ class FavoriteHandlers:
 
         if service in ("loxoneradio", "radio", "tunein"):
             folder_name = "Radio"
+            if folder_path == "local":
+                folder_name = "Lokale Sender"
+            elif folder_path == "custom":
+                folder_name = "Meine Sender"
+            elif folder_path == "music":
+                folder_name = "Musik"
+            elif folder_path == "world":
+                folder_name = "Länder"
+
             radios = await self._get_radios()
             for r in radios:
                 items.append({
@@ -186,11 +222,12 @@ class FavoriteHandlers:
                 items = [
                     {"id": "2", "name": "Radiosender", "type": 7, "audiopath": "folder:radios"},
                     {"id": "3", "name": "Playlists", "type": 7, "audiopath": "folder:playlists"},
+                    {"id": "4", "name": "Lieblingssongs", "type": 7, "audiopath": "folder:favorites"},
                     {"id": "5", "name": "Alben", "type": 7, "audiopath": "folder:albums"},
                     {"id": "6", "name": "Künstler", "type": 7, "audiopath": "folder:artists"},
                 ]
-            elif folder_path in ("2", "radios"):
-                folder_name = "Radiosender"
+            elif folder_path in ("2", "radios", "4", "favorites"):
+                folder_name = "Radiosender" if folder_path in ("2", "radios") else "Lieblingssongs"
                 radios = await self._get_radios()
                 for r in radios:
                     items.append({
@@ -271,9 +308,9 @@ class FavoriteHandlers:
         if not subparts:
             return build_empty_response(command)
 
-        if len(subparts) >= 3 and subparts[1] == "noUser":
+        if len(subparts) >= 3 and subparts[1].lower() == "nouser":
             media_path = "/".join(subparts[2:])
-        elif len(subparts) >= 3 and subparts[0] in ("spotify", "loxoneradio", "local", "radio", "tunein"):
+        elif len(subparts) >= 3 and subparts[0].lower() in ("spotify", "loxoneradio", "local", "radio", "tunein"):
             media_path = "/".join(subparts[2:])
         else:
             media_path = "/".join(subparts)

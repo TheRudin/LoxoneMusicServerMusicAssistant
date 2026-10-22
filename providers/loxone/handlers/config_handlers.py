@@ -160,6 +160,28 @@ class ConfigHandlers:
                     return result
         except Exception as exc:
             logger.warning("Miniserver devicestartup ping to %s failed: %s", url, exc)
+            fallback_ip = "192.168.1.107"
+            if target_ip != fallback_ip:
+                fallback_url = f"http://{fallback_ip}:{port}/dev/sps/devicestartup/{quote(target_uuid)}"
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(fallback_url, timeout=aiohttp.ClientTimeout(total=3.0)) as resp:
+                            text = await resp.text()
+                            logger.info("Miniserver fallback ping to %s returned %s: %s", fallback_url, resp.status, text.strip())
+                            self.config.miniserver_ip = fallback_ip
+                            result = {
+                                "success": True,
+                                "timestamp": ts,
+                                "url": fallback_url,
+                                "status": resp.status,
+                                "response": text.strip(),
+                            }
+                            self.config.last_startup_ping = result
+                            self._save_state()
+                            return result
+                except Exception as fb_exc:
+                    logger.debug("Fallback ping to %s failed: %s", fallback_url, fb_exc)
+
             result = {
                 "success": False,
                 "timestamp": ts,
